@@ -1,71 +1,114 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 
-// ─── OCR: Tesseract.js (loaded from CDN) ───────────────────────────────────
-const loadTesseract = (() => {
-  let promise = null;
-  return () => {
-    if (promise) return promise;
-    promise = new Promise((resolve, reject) => {
-      if (window.Tesseract) { resolve(window.Tesseract); return; }
-      const script = document.createElement("script");
-      script.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
-      script.onload = () => resolve(window.Tesseract);
-      script.onerror = () => reject(new Error("Failed to load Tesseract.js"));
-      document.head.appendChild(script);
-    });
-    return promise;
-  };
-})();
-
-// ─── Fuzzy strain matcher ──────────────────────────────────────────────────
-const fuzzyMatch = (ocrText, strainNames) => {
-  if (!ocrText) return null;
-  const clean = ocrText.toLowerCase().replace(/[^a-z0-9\s#]/g, "").trim();
-  const words = clean.split(/\s+/);
-  
-  // Direct exact match
-  for (const name of strainNames) {
-    if (clean.includes(name.toLowerCase())) return name;
+// ─── Levenshtein edit distance ─────────────────────────────────────────────
+const editDistance = (a, b) => {
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+  const matrix = [];
+  for (let i = 0; i <= b.length; i++) matrix[i] = [i];
+  for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
+  for (let i = 1; i <= b.length; i++) {
+    for (let j = 1; j <= a.length; j++) {
+      matrix[i][j] = b[i - 1] === a[j - 1]
+        ? matrix[i - 1][j - 1]
+        : Math.min(matrix[i - 1][j - 1] + 1, matrix[i][j - 1] + 1, matrix[i - 1][j] + 1);
+    }
   }
+  return matrix[b.length][a.length];
+};
+
+// ─── Common OCR misreads for cannabis label text ───────────────────────────
+const ocrNormalize = (text) => {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s#]/g, " ")
+    .replace(/0/g, "o")       // 0 → o
+    .replace(/1(?=[a-z])/g, "l") // 1 before letter → l
+    .replace(/5(?=[a-z])/g, "s") // 5 before letter → s
+    .replace(/8/g, "b")       // 8 → b (common on stylized fonts)
+    .replace(/\s+/g, " ")
+    .trim();
+};
+
+// ─── Fuzzy strain matcher — multi-strategy ─────────────────────────────────
+const fuzzyMatch = (ocrText, strainNames) => {
+  if (!ocrText || ocrText.trim().length < 3) return null;
   
-  // Score-based fuzzy match
+  // Clean and normalize OCR text
+  const raw = ocrText.toLowerCase().replace(/[^a-z0-9\s#\-']/g, " ").replace(/\s+/g, " ").trim();
+  const normalized = ocrNormalize(ocrText);
+  const lines = ocrText.split(/\n/).map(l => l.trim().toLowerCase()).filter(l => l.length > 2);
+  const allWords = raw.split(/\s+/).filter(w => w.length >= 2);
+  
+  console.log("OCR cleaned:", raw);
+  console.log("OCR lines:", lines);
+  
   let bestMatch = null;
   let bestScore = 0;
   
   for (const name of strainNames) {
     const nameLower = name.toLowerCase();
+    const nameNorm = ocrNormalize(name);
     const nameWords = nameLower.split(/\s+/);
     let score = 0;
     
-    // Check if each word of the strain name appears in OCR text
-    for (const nw of nameWords) {
-      if (clean.includes(nw)) score += 3;
-      else {
-        // Levenshtein-like partial match
-        for (const ow of words) {
-          if (ow.length < 3) continue;
-          if (nw.includes(ow) || ow.includes(nw)) { score += 2; break; }
-          // Check edit distance for close matches
-          let matches = 0;
-          const shorter = Math.min(nw.length, ow.length);
-          for (let i = 0; i < shorter; i++) { if (nw[i] === ow[i]) matches++; }
-          if (matches / shorter > 0.7) { score += 1; break; }
-        }
+    // ── Strategy 1: Exact substring match in raw text (highest confidence)
+    if (raw.includes(nameLower)) { return name; }
+    if (normalized.includes(nameNorm)) { score += 20; }
+    
+    // ── Strategy 2: Check each line individually (labels often have strain name on its own line)
+    for (const line of lines) {
+      if (line.includes(nameLower)) return name;
+      const lineNorm = ocrNormalize(line);
+      if (lineNorm.includes(nameNorm)) { score += 15; break; }
+      // Edit distance on full line vs strain name
+      if (line.length < nameLower.length * 2) {
+        const dist = editDistance(line.replace(/\s/g, ""), nameLower.replace(/\s/g, ""));
+        if (dist <= 2) { score += 12; break; }
+        if (dist <= 3 && nameLower.length >= 6) { score += 8; break; }
       }
     }
     
-    // Bonus for matching word count
-    if (nameWords.length === 1 && words.some(w => w === nameLower)) score += 5;
+    // ── Strategy 3: Word-level matching
+    let wordHits = 0;
+    for (const nw of nameWords) {
+      // Direct word match
+      if (allWords.includes(nw)) { wordHits++; score += 5; continue; }
+      // Check each OCR word for close edit distance
+      for (const ow of allWords) {
+        if (ow.length < 3) continue;
+        const dist = editDistance(nw, ow);
+        const maxDist = nw.length <= 4 ? 1 : 2;
+        if (dist <= maxDist) { wordHits++; score += 4 - dist; break; }
+        // Substring containment (OCR might merge/split words)
+        if (nw.length >= 4 && (ow.includes(nw) || nw.includes(ow))) { wordHits++; score += 3; break; }
+      }
+    }
     
-    // Normalize by name length
-    const normalized = score / nameWords.length;
-    if (normalized > bestScore && normalized >= 1.5) {
-      bestScore = normalized;
+    // Bonus if all words of the strain name were found
+    if (wordHits === nameWords.length) score += 6;
+    // Bonus for single-word strains that match closely
+    if (nameWords.length === 1 && nameLower.length >= 4) {
+      for (const ow of allWords) {
+        if (editDistance(nameLower, ow) <= 1) { score += 10; break; }
+      }
+    }
+    
+    // ── Strategy 4: Check for "dragonfly" nearby (increases confidence this is a Dragonfly product)
+    if (raw.includes("dragonfly") || raw.includes("dragon") || normalized.includes("dragonfly")) {
+      score += 2;
+    }
+    
+    if (score > bestScore) {
+      bestScore = score;
       bestMatch = name;
     }
   }
   
-  return bestMatch;
+  console.log("Best match:", bestMatch, "score:", bestScore);
+  
+  // Only return if confidence is high enough
+  return bestScore >= 5 ? bestMatch : null;
 };
 
 // ─── Dragonfly Strain Database ─────────────────────────────────────────────
@@ -176,7 +219,6 @@ export default function DragonflyScanner() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(null);
   const [scanStatus, setScanStatus] = useState("");
-  const [ocrReady, setOcrReady] = useState(false);
   const canvasRef = useRef(null);
   const [cameraActive, setCameraActive] = useState(false);
   const [scanning, setScanning] = useState(false);
@@ -185,14 +227,12 @@ export default function DragonflyScanner() {
   const streamRef = useRef(null);
   const fileInputRef = useRef(null);
 
-  // Load Google Fonts + preload Tesseract OCR
+  // Load Google Fonts
   useEffect(() => {
     const link = document.createElement("link");
     link.href = "https://fonts.googleapis.com/css2?family=Oswald:wght@300;400;500;600;700&family=DM+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap";
     link.rel = "stylesheet";
     document.head.appendChild(link);
-    // Preload Tesseract in background
-    loadTesseract().then(() => setOcrReady(true)).catch(() => {});
   }, []);
 
   const strainNames = Object.keys(STRAIN_DB);
@@ -201,19 +241,43 @@ export default function DragonflyScanner() {
     : [];
 
   // Camera functions
+  const [cameraError, setCameraError] = useState(null);
+  
   const startCamera = useCallback(async () => {
+    setCameraError(null);
     try {
+      // Check if getUserMedia is available (won't work in iframes/Claude preview)
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setCameraError("Camera not available in this environment. Use photo upload instead.");
+        setCameraActive(false);
+        return;
+      }
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } }
       });
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        videoRef.current.play();
+        await videoRef.current.play();
+        // Check if video is actually producing frames after a short delay
+        setTimeout(() => {
+          if (videoRef.current && (videoRef.current.videoWidth === 0 || videoRef.current.videoHeight === 0)) {
+            setCameraError("Camera connected but no video feed. Try uploading a photo instead.");
+          }
+        }, 2000);
       }
       setCameraActive(true);
     } catch (err) {
-      // Fallback: offer manual selection
+      console.error("Camera error:", err.name, err.message);
+      if (err.name === "NotAllowedError") {
+        setCameraError("Camera permission denied. Tap 'Upload a photo' below instead.");
+      } else if (err.name === "NotFoundError") {
+        setCameraError("No camera found on this device. Use photo upload instead.");
+      } else if (err.name === "NotReadableError") {
+        setCameraError("Camera is in use by another app. Try closing other apps or upload a photo.");
+      } else {
+        setCameraError("Couldn't access camera. Use photo upload below.");
+      }
       setCameraActive(false);
     }
   }, []);
@@ -226,57 +290,106 @@ export default function DragonflyScanner() {
     setCameraActive(false);
   }, []);
 
-  // ─── OCR: Capture frame from video and run OCR ──────────────────────────
-  const captureAndOCR = useCallback(async (imageSource) => {
+  // ─── Resize image to reduce API payload ─────────────────────────────────
+  const resizeImage = (dataUrl, maxDim = 800) => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        let w = img.width, h = img.height;
+        if (w > maxDim || h > maxDim) {
+          const scale = maxDim / Math.max(w, h);
+          w = Math.round(w * scale);
+          h = Math.round(h * scale);
+        }
+        const c = document.createElement("canvas");
+        c.width = w; c.height = h;
+        c.getContext("2d").drawImage(img, 0, 0, w, h);
+        resolve(c.toDataURL("image/jpeg", 0.85));
+      };
+      img.src = dataUrl;
+    });
+  };
+
+  // ─── Claude Vision API: Identify strain from product photo ────────────
+  const identifyWithVision = useCallback(async (imageSource) => {
     setScanning(true);
     setScanProgress(10);
-    setScanStatus("Loading OCR engine...");
+    setScanStatus("Capturing image...");
     
     try {
-      const Tesseract = await loadTesseract();
-      setScanProgress(20);
-      setScanStatus("Preparing image...");
+      let imageSrc = imageSource;
       
-      let imageData = imageSource;
-      
-      // If it's from the video feed, capture a frame to canvas
+      // If from video feed, capture a frame
       if (imageSource === "camera" && videoRef.current) {
         const canvas = document.createElement("canvas");
         const video = videoRef.current;
         canvas.width = video.videoWidth || 640;
         canvas.height = video.videoHeight || 480;
-        const ctx = canvas.getContext("2d");
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        // Enhance contrast for better OCR
-        ctx.filter = "contrast(1.5) brightness(1.1)";
-        ctx.drawImage(canvas, 0, 0);
-        imageData = canvas.toDataURL("image/png");
+        canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+        imageSrc = canvas.toDataURL("image/jpeg", 0.85);
       }
       
+      setScanProgress(20);
+      setScanStatus("Preparing for analysis...");
+      
+      // Resize to keep API payload small
+      const resized = await resizeImage(imageSrc);
+      const base64 = resized.split(",")[1];
+      const mediaType = resized.startsWith("data:image/png") ? "image/png" : "image/jpeg";
+      
       setScanProgress(30);
-      setScanStatus("Reading text from image...");
+      setScanStatus("AI analyzing product...");
       
-      const worker = await Tesseract.createWorker("eng");
+      const strainList = strainNames.join(", ");
       
-      setScanProgress(50);
-      setScanStatus("Analyzing label...");
+      const response = await fetch("/api/scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          image_base64: base64,
+          media_type: mediaType,
+          strain_list: strainList,
+        })
+      });
       
-      const { data } = await worker.recognize(imageData);
-      await worker.terminate();
+      setScanProgress(70);
+      setScanStatus("Processing result...");
       
-      setScanProgress(80);
-      setScanStatus("Matching strain...");
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.error || `Server error: ${response.status}`);
+      }
       
-      const ocrText = data.text;
-      console.log("OCR raw text:", ocrText);
+      const result = await response.json();
+      const aiResponse = result.strain || "UNKNOWN";
       
-      // Try to match against our strain database
-      const matched = fuzzyMatch(ocrText, strainNames);
+      console.log("Claude Vision response:", aiResponse);
+      
+      setScanProgress(90);
+      
+      // Match the AI response against our strain database
+      let matched = null;
+      
+      // Exact match
+      if (STRAIN_DB[aiResponse]) {
+        matched = aiResponse;
+      } else if (aiResponse !== "UNKNOWN") {
+        // Fuzzy match the AI's response against strain names
+        const aiLower = aiResponse.toLowerCase();
+        for (const name of strainNames) {
+          if (name.toLowerCase() === aiLower) { matched = name; break; }
+          if (aiLower.includes(name.toLowerCase()) || name.toLowerCase().includes(aiLower)) { matched = name; break; }
+        }
+        // If still no match, try edit distance
+        if (!matched) {
+          matched = fuzzyMatch(aiResponse, strainNames);
+        }
+      }
       
       setScanProgress(100);
       
       if (matched) {
-        setScanStatus(`Found: ${matched}`);
+        setScanStatus(`Identified: ${matched}`);
         setTimeout(() => {
           setScanning(false);
           setScanStatus("");
@@ -285,21 +398,27 @@ export default function DragonflyScanner() {
           setScreen("result");
         }, 800);
       } else {
-        setScanStatus("Couldn't identify strain. Try again or search manually.");
+        setScanStatus("Couldn't identify strain. Try a clearer photo or search manually.");
         setTimeout(() => {
           setScanning(false);
           setScanProgress(0);
           setScanStatus("");
-        }, 2500);
+        }, 3000);
       }
     } catch (err) {
-      console.error("OCR error:", err);
-      setScanStatus("Scan failed. Try uploading a photo instead.");
+      console.error("Vision API error:", err);
+      // Fall back to showing a helpful message
+      const isNetworkError = err.message?.includes("fetch") || err.message?.includes("network");
+      setScanStatus(
+        isNetworkError
+          ? "Network error — check your connection and try again."
+          : "Scan failed. Try again or search manually."
+      );
       setTimeout(() => {
         setScanning(false);
         setScanProgress(0);
         setScanStatus("");
-      }, 2000);
+      }, 3000);
     }
   }, [strainNames, stopCamera]);
 
@@ -308,7 +427,7 @@ export default function DragonflyScanner() {
     if (file) {
       const reader = new FileReader();
       reader.onload = (ev) => {
-        captureAndOCR(ev.target.result);
+        identifyWithVision(ev.target.result);
       };
       reader.readAsDataURL(file);
     }
@@ -1119,8 +1238,16 @@ export default function DragonflyScanner() {
       </button>
 
       <div style={styles.videoWrapper}>
-        <video ref={videoRef} style={styles.video} muted playsInline />
-        {!scanning && (
+        {!cameraError && <video ref={videoRef} style={styles.video} muted playsInline />}
+        {cameraError && !scanning && (
+          <div style={{ ...styles.scanOverlay, background: COLORS.bgCard, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, padding: 24 }}>
+            <div style={{ fontSize: 48 }}>📷</div>
+            <div style={{ fontFamily: FONTS.display, fontSize: 15, fontWeight: 500, color: COLORS.textMuted, textAlign: "center", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+              Use the photo button below
+            </div>
+          </div>
+        )}
+        {!cameraError && !scanning && (
           <div style={styles.scanOverlay}>
             <div style={styles.scanFrame} />
           </div>
@@ -1149,7 +1276,7 @@ export default function DragonflyScanner() {
         <>
           <button
             style={{ ...styles.scanBtn, width: "100%", maxWidth: 400, justifyContent: "center" }}
-            onClick={() => captureAndOCR("camera")}
+            onClick={() => identifyWithVision("camera")}
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <circle cx="12" cy="12" r="3" />
@@ -1164,13 +1291,20 @@ export default function DragonflyScanner() {
             <div style={styles.dividerLine} />
           </div>
 
-          <button style={styles.uploadBtn} onClick={() => fileInputRef.current?.click()}>
-            📷 Upload a photo of your product
+          {cameraError && (
+            <div style={{ width: "100%", maxWidth: 400, padding: "12px 16px", background: "rgba(200,255,0,0.08)", border: `1px solid ${COLORS.accent}40`, borderRadius: 10, marginBottom: 12, textAlign: "center" }}>
+              <div style={{ fontSize: 14, color: COLORS.accent, marginBottom: 8, fontWeight: 500 }}>{cameraError}</div>
+            </div>
+          )}
+
+          <button style={{ ...styles.uploadBtn, background: cameraError ? COLORS.accent : COLORS.bgCard, color: cameraError ? "#000" : COLORS.textMuted, fontWeight: cameraError ? 600 : 400, borderStyle: cameraError ? "solid" : "dashed", borderColor: cameraError ? COLORS.accent : COLORS.borderLight }} onClick={() => fileInputRef.current?.click()}>
+            📷 {cameraError ? "Take Photo or Upload" : "Upload a photo of your product"}
           </button>
           <input
             ref={fileInputRef}
             type="file"
             accept="image/*"
+            capture="environment"
             style={{ display: "none" }}
             onChange={handleFileUpload}
           />

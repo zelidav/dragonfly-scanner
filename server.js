@@ -7,9 +7,78 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: "10mb" }));
 
+// Serve static frontend build in production
 app.use(express.static(path.join(__dirname, "dist")));
+
+// ─── Claude Vision API Proxy ──────────────────────────────────────────────
+// Keeps the Anthropic API key server-side. Frontend POSTs image to /api/scan,
+// server forwards to Claude, returns the strain name.
+// Set ANTHROPIC_API_KEY as a Railway environment variable.
+
+app.post("/api/scan", async (req, res) => {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    return res.status(500).json({ error: "ANTHROPIC_API_KEY not configured on server." });
+  }
+
+  const { image_base64, media_type, strain_list } = req.body;
+  if (!image_base64 || !strain_list) {
+    return res.status(400).json({ error: "image_base64 and strain_list are required." });
+  }
+
+  try {
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 200,
+        messages: [{
+          role: "user",
+          content: [
+            {
+              type: "image",
+              source: { type: "base64", media_type: media_type || "image/jpeg", data: image_base64 }
+            },
+            {
+              type: "text",
+              text: `You are a cannabis product identifier for the Dragonfly brand. Look at this product photo and identify which strain it is.\n\nThe complete list of Dragonfly strains is: ${strain_list}\n\nRules:\n- If you can identify the strain from the label text, packaging design, or any visible text, respond with ONLY the exact strain name from the list above.\n- If you can see text but it doesn't exactly match, respond with the closest match from the list.\n- If you cannot identify any strain, respond with exactly: UNKNOWN\n- Do not add any explanation, just the strain name or UNKNOWN.`
+            }
+          ]
+        }]
+      })
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error("Anthropic API error:", response.status, errText);
+      return res.status(502).json({ error: "Vision API request failed", status: response.status });
+    }
+
+    const result = await response.json();
+    const strain = result.content?.[0]?.text?.trim() || "UNKNOWN";
+    console.log(`🔍 Vision scan result: "${strain}"`);
+    res.json({ strain });
+  } catch (err) {
+    console.error("Vision proxy error:", err.message);
+    res.status(500).json({ error: "Vision scan failed: " + err.message });
+  }
+});
+
+// ─── Email Configuration ───────────────────────────────────────────────────
+// Set these as Railway environment variables:
+//   SMTP_HOST=smtp.gmail.com (or your provider)
+//   SMTP_PORT=587
+//   SMTP_USER=your-email@gmail.com
+//   SMTP_PASS=your-app-password
+//   NOTIFY_EMAIL=sasha@dopestr.com
+//   FROM_EMAIL=noreply@dragonflybrandny.com
 
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST || "smtp.gmail.com",
@@ -24,64 +93,148 @@ const transporter = nodemailer.createTransport({
 const NOTIFY_EMAIL = process.env.NOTIFY_EMAIL || "sasha@dopestr.com";
 const FROM_EMAIL = process.env.FROM_EMAIL || "noreply@dragonflybrandny.com";
 
+// ─── In-memory signup log (persists until server restart) ──────────────────
 const signups = [];
 
+// ─── Signup Endpoint ───────────────────────────────────────────────────────
 app.post("/api/signup", async (req, res) => {
   const { name, email, phone, strain } = req.body;
+
+  // Validation
   if (!name || !email) {
     return res.status(400).json({ error: "Name and email are required." });
   }
+
   const timestamp = new Date().toLocaleString("en-US", {
-    timeZone: "America/New_York", weekday: "short", year: "numeric",
-    month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+    timeZone: "America/New_York",
+    weekday: "short",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
   });
+
+  // Store in memory
   const entry = { name, email, phone: phone || "Not provided", strain: strain || "None", timestamp };
   signups.push(entry);
 
-  const htmlBody = `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:560px;margin:0 auto"><div style="background:#0a0a0a;padding:32px;border-radius:12px"><div style="text-align:center;margin-bottom:24px"><h1 style="color:#c8ff00;font-size:24px;margin:0;letter-spacing:2px">DRAGONFLY</h1><p style="color:#888;font-size:13px;margin:4px 0 0">New Scanner Signup</p></div><div style="background:#141414;border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:20px;margin-bottom:16px"><table style="width:100%;border-collapse:collapse"><tr><td style="color:#888;font-size:12px;text-transform:uppercase;letter-spacing:1px;padding:8px 0;vertical-align:top;width:100px">Name</td><td style="color:#fff;font-size:15px;padding:8px 0;font-weight:600">${name}</td></tr><tr><td style="color:#888;font-size:12px;text-transform:uppercase;letter-spacing:1px;padding:8px 0;vertical-align:top">Email</td><td style="color:#fff;font-size:15px;padding:8px 0"><a href="mailto:${email}" style="color:#c8ff00;text-decoration:none">${email}</a></td></tr><tr><td style="color:#888;font-size:12px;text-transform:uppercase;letter-spacing:1px;padding:8px 0;vertical-align:top">Phone</td><td style="color:#fff;font-size:15px;padding:8px 0">${phone || "Not provided"}</td></tr>${strain ? `<tr><td style="color:#888;font-size:12px;text-transform:uppercase;letter-spacing:1px;padding:8px 0;vertical-align:top">Strain</td><td style="color:#fff;font-size:15px;padding:8px 0">${strain} (viewing when signed up)</td></tr>` : ""}<tr><td style="color:#888;font-size:12px;text-transform:uppercase;letter-spacing:1px;padding:8px 0;vertical-align:top">Time</td><td style="color:#fff;font-size:15px;padding:8px 0">${timestamp}</td></tr></table></div><div style="text-align:center;color:#555;font-size:11px;margin-top:16px">Dragonfly Product Scanner - Signup #${signups.length}</div></div></div>`;
+  // Build email
+  const htmlBody = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 560px; margin: 0 auto;">
+      <div style="background: #0a0a0a; padding: 32px; border-radius: 12px;">
+        <div style="text-align: center; margin-bottom: 24px;">
+          <h1 style="color: #c8ff00; font-size: 24px; margin: 0; letter-spacing: 2px;">DRAGONFLY</h1>
+          <p style="color: #888; font-size: 13px; margin: 4px 0 0;">New Scanner Signup</p>
+        </div>
+        <div style="background: #141414; border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 20px; margin-bottom: 16px;">
+          <table style="width: 100%; border-collapse: collapse;">
+            <tr>
+              <td style="color: #888; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; padding: 8px 0; vertical-align: top; width: 100px;">Name</td>
+              <td style="color: #fff; font-size: 15px; padding: 8px 0; font-weight: 600;">${name}</td>
+            </tr>
+            <tr>
+              <td style="color: #888; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; padding: 8px 0; vertical-align: top;">Email</td>
+              <td style="color: #fff; font-size: 15px; padding: 8px 0;"><a href="mailto:${email}" style="color: #c8ff00; text-decoration: none;">${email}</a></td>
+            </tr>
+            <tr>
+              <td style="color: #888; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; padding: 8px 0; vertical-align: top;">Phone</td>
+              <td style="color: #fff; font-size: 15px; padding: 8px 0;">${phone || "Not provided"}</td>
+            </tr>
+            ${strain ? `
+            <tr>
+              <td style="color: #888; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; padding: 8px 0; vertical-align: top;">Strain</td>
+              <td style="color: #fff; font-size: 15px; padding: 8px 0;">${strain} (was viewing when signed up)</td>
+            </tr>` : ""}
+            <tr>
+              <td style="color: #888; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; padding: 8px 0; vertical-align: top;">Time</td>
+              <td style="color: #fff; font-size: 15px; padding: 8px 0;">${timestamp}</td>
+            </tr>
+          </table>
+        </div>
+        <div style="text-align: center; color: #555; font-size: 11px; margin-top: 16px;">
+          Dragonfly Product Scanner · Signup #${signups.length}
+        </div>
+      </div>
+    </div>
+  `;
 
-  const textBody = `DRAGONFLY - New Scanner Signup\nName: ${name}\nEmail: ${email}\nPhone: ${phone || "Not provided"}\nStrain: ${strain || "None"}\nTime: ${timestamp}\nSignup #${signups.length}`;
+  const textBody = `
+DRAGONFLY — New Scanner Signup
+──────────────────────────────
+Name:    ${name}
+Email:   ${email}
+Phone:   ${phone || "Not provided"}
+Strain:  ${strain || "None"}
+Time:    ${timestamp}
+Signup #${signups.length}
+  `.trim();
 
+  // Send email
   try {
     if (process.env.SMTP_USER && process.env.SMTP_PASS) {
       await transporter.sendMail({
         from: `"Dragonfly Scanner" <${FROM_EMAIL}>`,
         to: NOTIFY_EMAIL,
-        subject: `New Signup: ${name} - Dragonfly Scanner`,
-        text: textBody, html: htmlBody,
+        subject: `🐉 New Signup: ${name} — Dragonfly Scanner`,
+        text: textBody,
+        html: htmlBody,
       });
-      console.log(`Email sent to ${NOTIFY_EMAIL} for signup: ${name} <${email}>`);
+      console.log(`✅ Email sent to ${NOTIFY_EMAIL} for signup: ${name} <${email}>`);
     } else {
-      console.log(`SMTP not configured - signup logged but email not sent.`);
+      console.log(`⚠️  SMTP not configured — signup logged but email not sent.`);
+      console.log(`    To enable emails, set SMTP_USER and SMTP_PASS env vars.`);
     }
-    console.log(`Signup #${signups.length}: ${name} | ${email} | ${phone || "no phone"} | Strain: ${strain || "none"} | ${timestamp}`);
-    return res.json({ success: true, message: "Signup received! You'll hear from us soon." });
+
+    // Always log to console as backup
+    console.log(`📝 Signup #${signups.length}: ${name} | ${email} | ${phone || "no phone"} | Strain: ${strain || "none"} | ${timestamp}`);
+
+    return res.json({
+      success: true,
+      message: "Signup received! You'll hear from us soon.",
+    });
   } catch (err) {
-    console.error("Email send error:", err.message);
-    console.log(`Signup #${signups.length} (email failed): ${name} | ${email} | ${phone || "no phone"}`);
-    return res.json({ success: true, message: "Signup received!", emailWarning: "Email could not be sent - signup was still recorded." });
+    console.error("❌ Email send error:", err.message);
+
+    // Still save the signup even if email fails
+    console.log(`📝 Signup #${signups.length} (email failed): ${name} | ${email} | ${phone || "no phone"}`);
+
+    return res.json({
+      success: true,
+      message: "Signup received! You'll hear from us soon.",
+      emailWarning: "Notification email could not be sent — signup was still recorded.",
+    });
   }
 });
 
+// ─── View all signups (internal/admin) ─────────────────────────────────────
 app.get("/api/signups", (req, res) => {
   const key = req.query.key;
+  // Simple auth — set ADMIN_KEY env var on Railway
   if (process.env.ADMIN_KEY && key !== process.env.ADMIN_KEY) {
     return res.status(401).json({ error: "Unauthorized" });
   }
   res.json({ total: signups.length, signups });
 });
 
+// ─── Health check ──────────────────────────────────────────────────────────
 app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", uptime: process.uptime(), signups: signups.length, emailConfigured: !!(process.env.SMTP_USER && process.env.SMTP_PASS) });
+  res.json({
+    status: "ok",
+    uptime: process.uptime(),
+    signups: signups.length,
+    emailConfigured: !!(process.env.SMTP_USER && process.env.SMTP_PASS),
+  });
 });
 
+// ─── SPA fallback ──────────────────────────────────────────────────────────
 app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "dist", "index.html"));
 });
 
 app.listen(PORT, () => {
-  console.log(`\nDragonfly Scanner API running on port ${PORT}`);
-  console.log(`   Notifications -> ${NOTIFY_EMAIL}`);
+  console.log(`\n🐉 Dragonfly Scanner API running on port ${PORT}`);
+  console.log(`   Notifications → ${NOTIFY_EMAIL}`);
   console.log(`   SMTP configured: ${!!(process.env.SMTP_USER && process.env.SMTP_PASS)}`);
-  console.log(`   Admin signups: /api/signups${process.env.ADMIN_KEY ? "?key=***" : ""}\n`);
+  console.log(`   Admin signups:   /api/signups${process.env.ADMIN_KEY ? "?key=***" : ""}\n`);
 });
