@@ -1,75 +1,187 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 
+// ─── Levenshtein edit distance ─────────────────────────────────────────────
+const editDistance = (a, b) => {
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+  const matrix = [];
+  for (let i = 0; i <= b.length; i++) matrix[i] = [i];
+  for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
+  for (let i = 1; i <= b.length; i++) {
+    for (let j = 1; j <= a.length; j++) {
+      matrix[i][j] = b[i - 1] === a[j - 1]
+        ? matrix[i - 1][j - 1]
+        : Math.min(matrix[i - 1][j - 1] + 1, matrix[i][j - 1] + 1, matrix[i - 1][j] + 1);
+    }
+  }
+  return matrix[b.length][a.length];
+};
+
+// ─── Common OCR misreads for cannabis label text ───────────────────────────
+const ocrNormalize = (text) => {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s#]/g, " ")
+    .replace(/0/g, "o")       // 0 → o
+    .replace(/1(?=[a-z])/g, "l") // 1 before letter → l
+    .replace(/5(?=[a-z])/g, "s") // 5 before letter → s
+    .replace(/8/g, "b")       // 8 → b (common on stylized fonts)
+    .replace(/\s+/g, " ")
+    .trim();
+};
+
+// ─── Fuzzy strain matcher — multi-strategy ─────────────────────────────────
+const fuzzyMatch = (ocrText, strainNames) => {
+  if (!ocrText || ocrText.trim().length < 3) return null;
+  
+  // Clean and normalize OCR text
+  const raw = ocrText.toLowerCase().replace(/[^a-z0-9\s#\-']/g, " ").replace(/\s+/g, " ").trim();
+  const normalized = ocrNormalize(ocrText);
+  const lines = ocrText.split(/\n/).map(l => l.trim().toLowerCase()).filter(l => l.length > 2);
+  const allWords = raw.split(/\s+/).filter(w => w.length >= 2);
+  
+  console.log("OCR cleaned:", raw);
+  console.log("OCR lines:", lines);
+  
+  let bestMatch = null;
+  let bestScore = 0;
+  
+  for (const name of strainNames) {
+    const nameLower = name.toLowerCase();
+    const nameNorm = ocrNormalize(name);
+    const nameWords = nameLower.split(/\s+/);
+    let score = 0;
+    
+    // ── Strategy 1: Exact substring match in raw text (highest confidence)
+    if (raw.includes(nameLower)) { return name; }
+    if (normalized.includes(nameNorm)) { score += 20; }
+    
+    // ── Strategy 2: Check each line individually (labels often have strain name on its own line)
+    for (const line of lines) {
+      if (line.includes(nameLower)) return name;
+      const lineNorm = ocrNormalize(line);
+      if (lineNorm.includes(nameNorm)) { score += 15; break; }
+      // Edit distance on full line vs strain name
+      if (line.length < nameLower.length * 2) {
+        const dist = editDistance(line.replace(/\s/g, ""), nameLower.replace(/\s/g, ""));
+        if (dist <= 2) { score += 12; break; }
+        if (dist <= 3 && nameLower.length >= 6) { score += 8; break; }
+      }
+    }
+    
+    // ── Strategy 3: Word-level matching
+    let wordHits = 0;
+    for (const nw of nameWords) {
+      // Direct word match
+      if (allWords.includes(nw)) { wordHits++; score += 5; continue; }
+      // Check each OCR word for close edit distance
+      for (const ow of allWords) {
+        if (ow.length < 3) continue;
+        const dist = editDistance(nw, ow);
+        const maxDist = nw.length <= 4 ? 1 : 2;
+        if (dist <= maxDist) { wordHits++; score += 4 - dist; break; }
+        // Substring containment (OCR might merge/split words)
+        if (nw.length >= 4 && (ow.includes(nw) || nw.includes(ow))) { wordHits++; score += 3; break; }
+      }
+    }
+    
+    // Bonus if all words of the strain name were found
+    if (wordHits === nameWords.length) score += 6;
+    // Bonus for single-word strains that match closely
+    if (nameWords.length === 1 && nameLower.length >= 4) {
+      for (const ow of allWords) {
+        if (editDistance(nameLower, ow) <= 1) { score += 10; break; }
+      }
+    }
+    
+    // ── Strategy 4: Check for "dragonfly" nearby (increases confidence this is a Dragonfly product)
+    if (raw.includes("dragonfly") || raw.includes("dragon") || normalized.includes("dragonfly")) {
+      score += 2;
+    }
+    
+    if (score > bestScore) {
+      bestScore = score;
+      bestMatch = name;
+    }
+  }
+  
+  console.log("Best match:", bestMatch, "score:", bestScore);
+  
+  // Only return if confidence is high enough
+  return bestScore >= 5 ? bestMatch : null;
+};
+
 // ─── Dragonfly Strain Database ─────────────────────────────────────────────
 const STRAIN_DB = {
   // Prerolls
-  "Honey Banana": { type: "Hybrid", thc: "24-28%", genetics: "Honey Boo Boo × Banana OG", lineage: "Granddaddy Purple × Bukake → Honey Boo Boo | Banana Kush × OG Kush → Banana OG", flavor: "Sweet honey, ripe banana, tropical fruit", effects: "Euphoric, relaxed, creative", terpenes: "Myrcene, Limonene, Caryophyllene", description: "A smooth hybrid that wraps you in sweetness. The Honey Boo Boo parentage brings deep relaxation while Banana OG adds uplifting euphoria.", category: "Preroll 1g" },
-  "Ice Cream Cookies": { type: "Indica", thc: "26-30%", genetics: "Ice Cream Cake × Girl Scout Cookies", lineage: "Gelato 33 × Wedding Cake → Ice Cream Cake | OG Kush × Durban Poison → GSC", flavor: "Creamy vanilla, sweet dough, earthy", effects: "Sedating, happy, relaxed", terpenes: "Limonene, Caryophyllene, Linalool", description: "A dessert-forward indica that hits like a warm blanket. The Gelato lineage brings creamy smoothness while GSC genetics deliver the punch.", category: "Preroll 1g" },
-  "Jelly Donutz": { type: "Indica", thc: "25-29%", genetics: "Jelly Breath × Dosidos", lineage: "Mendo Breath × Do-Si-Dos → Jelly Breath | Face Off OG × OGKB → Dosidos", flavor: "Sweet berry jam, doughy, sugar glaze", effects: "Relaxed, sleepy, euphoric", terpenes: "Linalool, Myrcene, Limonene", description: "Named for its impossibly sweet, pastry-like flavor. The Mendo Breath genetics bring heavy body relaxation and a sweet, jammy exhale.", category: "Preroll 1g" },
-  "Orange Creampop": { type: "Hybrid", thc: "22-26%", genetics: "Orange Cookies × Cookies & Cream", lineage: "Orange Juice × GSC → Orange Cookies | Starfighter × GSC → Cookies & Cream", flavor: "Citrus burst, vanilla cream, sweet orange", effects: "Uplifting, creative, relaxed", terpenes: "Limonene, Myrcene, Humulene", description: "Like biting into a frozen creamsicle on a summer day. The Orange Cookies parentage delivers bright citrus while the Cookies & Cream adds a creamy finish.", category: "Preroll 1g" },
-  "Skittlez": { type: "Indica", thc: "24-28%", genetics: "Zkittlez (Grape Ape × Grapefruit)", lineage: "Mendocino Purps × Afghani → Grape Ape | Grapefruit (Cinderella 99 pheno)", flavor: "Tropical fruit medley, grape, berry", effects: "Calming, euphoric, focused", terpenes: "Caryophyllene, Linalool, Humulene", description: "The legendary Zkittlez delivers a rainbow of fruit flavors. Grape Ape brings the purple color and calm, while Grapefruit genetics add citrusy uplift.", category: "Preroll 1g" },
-  "Triple Cake": { type: "Hybrid", thc: "26-30%", genetics: "Triangle Mints × Wedding Cake", lineage: "Triangle Kush × Animal Mints → Triangle Mints | Cherry Pie × GSC → Wedding Cake", flavor: "Sweet cake batter, mint, gas", effects: "Euphoric, relaxed, creative", terpenes: "Limonene, Caryophyllene, Myrcene", description: "Triple the cake, triple the hit. Triangle Mints brings minty gas while Wedding Cake adds layers of sweet, doughy flavor with potent effects.", category: "Preroll 1g" },
-  "Afghan Kush": { type: "Indica", thc: "20-25%", genetics: "Landrace (Hindu Kush Mountains, Afghanistan)", lineage: "Pure landrace indica — one of cannabis' oldest cultivated strains, originating from the mountainous border of Afghanistan and Pakistan", flavor: "Earthy, woody, sweet hash", effects: "Deeply relaxing, sedating, stress relief", terpenes: "Myrcene, Pinene, Caryophyllene", description: "A pure landrace strain from the Hindu Kush mountain range. Thousands of years of natural selection created this bulletproof indica — the genetic backbone of countless modern hybrids.", category: "Preroll 1g" },
-  "AK-47": { type: "Sativa", thc: "20-25%", genetics: "Colombian × Mexican × Thai × Afghan", lineage: "A complex sativa-dominant blend of South American, Mexican, Thai, and Afghani landraces — first crossed in 1992 by Serious Seeds in the Netherlands", flavor: "Earthy, floral, sweet, sour", effects: "Uplifting, creative, alert, social", terpenes: "Myrcene, Pinene, Caryophyllene", description: "Despite its intense name, AK-47 delivers a mellow, steady cerebral buzz. Four landrace genetics combine to create one of the most awarded strains in cannabis history.", category: "Preroll 1g" },
-  "Blue Dream": { type: "Sativa", thc: "21-26%", genetics: "Blueberry × Haze", lineage: "Afghani × Thai × Purple Thai → Blueberry | Colombian Gold × Thai × Mexican × South Indian → Haze", flavor: "Sweet blueberry, vanilla, herbal", effects: "Balanced euphoria, gentle relaxation, creative", terpenes: "Myrcene, Pinene, Caryophyllene", description: "California's most iconic strain. The legendary DJ Short Blueberry brings sweet berry flavor while Haze genetics deliver soaring, clear-headed energy. The perfect balance.", category: "Preroll 1g" },
-  "Cap Junky": { type: "Hybrid", thc: "28-33%", genetics: "Alien Cookies × Kush Mints #11", lineage: "GSC × Alien Dawg → Alien Cookies | Bubba Kush × Animal Mints → Kush Mints", flavor: "Minty gas, earthy funk, sweet cream", effects: "Potent euphoria, creative, relaxed", terpenes: "Limonene, Caryophyllene, Myrcene", description: "A top-shelf powerhouse crossing two cookie-family heavyweights. Alien Cookies brings the funk while Kush Mints adds a frosty, gassy edge. Extremely high THC.", category: "Preroll 1g" },
-  "Chernobyl": { type: "Hybrid", thc: "22-26%", genetics: "Trainwreck × Jack the Ripper", lineage: "Mexican × Thai × Afghani → Trainwreck | Jack's Cleaner × Space Queen → Jack the Ripper", flavor: "Lime sherbet, tropical citrus, sweet", effects: "Energetic, uplifting, giggly", terpenes: "Terpinolene, Myrcene, Ocimene", description: "Created by TGA Subcool, Chernobyl is famous for its nuclear-green buds and radioactive lime flavor. Trainwreck provides the energy while Jack the Ripper adds a sweet citrus kick.", category: "Preroll 1g" },
-  "Cookie Crush": { type: "Hybrid", thc: "25-29%", genetics: "GSC × OG Kush", lineage: "Durban Poison × OG Kush → GSC | Chemdawg × Hindu Kush → OG Kush", flavor: "Sweet cookies, earthy pine, vanilla", effects: "Euphoric, relaxed, happy", terpenes: "Caryophyllene, Limonene, Humulene", description: "A double dose of the Cookie family's best traits. Girl Scout Cookies brings the sweet, doughy flavor while OG Kush reinforces the potent, relaxing backbone.", category: "Preroll 1g" },
-  "Death Star": { type: "Indica", thc: "24-28%", genetics: "Sensi Star × Sour Diesel", lineage: "Afghani indica hybrid → Sensi Star | Chemdawg × Mass Super Skunk × Northern Lights → Sour Diesel", flavor: "Diesel fuel, earthy, sweet skunk", effects: "Heavy relaxation, euphoric, sleepy", terpenes: "Myrcene, Caryophyllene, Limonene", description: "Named for its ability to destroy stress. Sensi Star brings the indica weight while Sour Diesel adds a sativa-leaning cerebral sparkle and pungent fuel aroma.", category: "Preroll 1g" },
-  "Garlic Budder": { type: "Indica", thc: "26-30%", genetics: "GMO × Peanut Butter Breath", lineage: "Chemdawg × GSC → GMO (Garlic Mushroom Onion) | Do-Si-Dos × Mendo Breath → Peanut Butter Breath", flavor: "Garlic, savory, creamy, funky", effects: "Heavy body, relaxed, sedating", terpenes: "Caryophyllene, Myrcene, Limonene", description: "For the savory palate — GMO's unmistakable garlic funk meets the creamy, nutty smoothness of Peanut Butter Breath. One of the most unique flavor profiles in the game.", category: "Preroll 1g" },
-  "GG#4": { type: "Hybrid", thc: "25-30%", genetics: "Chem's Sister × Sour Dubb × Chocolate Diesel", lineage: "Chemdawg sibling → Chem's Sister | Sour Diesel phenotype → Sour Dubb | Sour Diesel × Chocolate Trip → Chocolate Diesel", flavor: "Pine, earthy chocolate, diesel", effects: "Glued-to-couch, euphoric, relaxed", terpenes: "Caryophyllene, Myrcene, Limonene", description: "The legendary GG#4 (Gorilla Glue) — an accidental cross that became one of cannabis' most celebrated strains. Named for the resin that sticks to everything during trimming.", category: "Preroll 1g" },
-  "Green Crack": { type: "Sativa", thc: "20-25%", genetics: "Skunk #1 × Unknown Indica (disputed Afghani)", lineage: "Originally named 'Cush' — renamed by Snoop Dogg for its energizing effects. Descended from Skunk #1 lineage with possible Sweet Leaf/Afghani genetics", flavor: "Citrus mango, tropical, sweet", effects: "Energetic, focused, uplifting", terpenes: "Myrcene, Pinene, Caryophyllene", description: "The ultimate wake-and-bake strain. Delivers a tangy, fruity flavor and sharp mental energy. Snoop renamed it for the intense, invigorating rush it delivers.", category: "Preroll 1g" },
-  "Headband": { type: "Hybrid", thc: "24-28%", genetics: "OG Kush × Sour Diesel", lineage: "Chemdawg × Hindu Kush → OG Kush | Chemdawg × Mass Super Skunk × Northern Lights → Sour Diesel", flavor: "Creamy lemon, diesel, earthy", effects: "Cerebral pressure, relaxed, euphoric", terpenes: "Myrcene, Limonene, Caryophyllene", description: "Named for the subtle pressure you feel around your temples — like wearing an invisible headband. Two of cannabis' greatest strains combine for smooth, long-lasting effects.", category: "Preroll 1g" },
-  "Jealousy": { type: "Hybrid", thc: "27-31%", genetics: "Gelato 41 × Sherbert", lineage: "Sunset Sherbet × Thin Mint GSC → Gelato 41 | GSC × Pink Panties → Sherbert", flavor: "Creamy gelato, candy, berry", effects: "Balanced, euphoric, creative, calm", terpenes: "Caryophyllene, Limonene, Linalool", description: "Bred by Seed Junky Genetics, Jealousy lives up to the hype. Dense, purple-tinted buds deliver a creamy, candy-like flavor and perfectly balanced effects.", category: "Preroll 1g" },
-  "Jet Fuel Gelato": { type: "Hybrid", thc: "27-32%", genetics: "Jet Fuel × Gelato", lineage: "Aspen OG × High Country Diesel → Jet Fuel | Sunset Sherbet × Thin Mint GSC → Gelato", flavor: "Gas, sweet cream, diesel, berry", effects: "Potent euphoria, energetic, relaxed", terpenes: "Caryophyllene, Limonene, Myrcene", description: "High-octane meets creamy dessert. Jet Fuel brings the gas-forward punch while Gelato smooths it out with sweet, creamy undertones. A premium hybrid experience.", category: "Preroll 1g" },
-  "Kush Mintz": { type: "Hybrid", thc: "27-32%", genetics: "Animal Mints × Bubba Kush", lineage: "Thin Mint GSC × Fire OG × Animal Cookies → Animal Mints | OG Kush × Afghani → Bubba Kush", flavor: "Minty, earthy, sweet, coffee", effects: "Relaxing, euphoric, calming", terpenes: "Limonene, Caryophyllene, Myrcene", description: "Seed Junky's masterpiece. The Animal Mints gives it that frosty mint flavor while Bubba Kush adds old-school body sedation. A modern classic with legendary parents.", category: "Preroll 1g" },
-  "Lemon Pound Cake": { type: "Hybrid", thc: "23-27%", genetics: "Lemon Skunk × Cheese", lineage: "Lemon Joy × Skunk #1 → Lemon Skunk | Skunk #1 phenotype → Cheese", flavor: "Lemon zest, buttery cake, sweet cream", effects: "Uplifting, social, relaxed", terpenes: "Limonene, Caryophyllene, Humulene", description: "Exactly what it sounds like — a rich, buttery lemon cake flavor that coats the palate. The Lemon Skunk parentage provides zesty brightness while Cheese adds depth and body.", category: "Preroll 1g" },
-  "Liberty Haze": { type: "Sativa", thc: "22-27%", genetics: "G13 × ChemDawg 91", lineage: "Government G13 (legendary Afghani indica) × ChemDawg 91 (Chemdawg phenotype) — bred by Barney's Farm, 2011 Cannabis Cup winner", flavor: "Sharp lime, earthy, chemical, sweet", effects: "Energetic, creative, cerebral", terpenes: "Terpinolene, Myrcene, Pinene", description: "A Cannabis Cup champion from Barney's Farm. The mythical G13 brings potency while ChemDawg 91 adds electric sativa energy. Named for the freedom it gives your mind.", category: "Preroll 1g" },
-  "Northern Lights": { type: "Indica", thc: "20-24%", genetics: "Afghani × Thai", lineage: "Pure Afghani indica landrace × Thai sativa landrace — originally cultivated in Seattle, perfected by Sensi Seeds in the Netherlands in the 1980s", flavor: "Sweet earth, pine, honey", effects: "Full body relaxation, dreamy, sleepy", terpenes: "Myrcene, Pinene, Caryophyllene", description: "One of the most famous indicas ever created. Northern Lights has been a cornerstone of cannabis breeding since the 1980s — a two-time Cannabis Cup winner and parent to countless hybrids.", category: "Preroll 1g" },
-  "NYC Diesel": { type: "Hybrid", thc: "21-25%", genetics: "Mexican Sativa × Afghani", lineage: "Soma Seeds creation — Mexican sativa landrace × Afghani indica with possible Sour Diesel influence. A New York City staple since the early 2000s", flavor: "Grapefruit diesel, lime, red berry", effects: "Cerebral, talkative, creative, happy", terpenes: "Limonene, Myrcene, Caryophyllene", description: "Born in the Big Apple. NYC Diesel captures the electric energy of the city in a joint — bright citrus and diesel fuel aroma with a creative, social buzz that keeps the conversation flowing.", category: "Preroll 1g" },
-  "Skywalker OG": { type: "Indica", thc: "25-30%", genetics: "Skywalker × OG Kush", lineage: "Blueberry × Mazar I Sharif → Skywalker | Chemdawg × Hindu Kush → OG Kush", flavor: "Earthy pine, spicy, herbal", effects: "Heavy sedation, euphoric, tranquil", terpenes: "Myrcene, Caryophyllene, Limonene", description: "The force is strong with this one. Skywalker's Blueberry-Afghan heritage meets the unmatched potency of OG Kush for a deeply sedating experience that sends you to a galaxy far, far away.", category: "Preroll 1g" },
-  "Sour Lemons": { type: "Sativa", thc: "22-26%", genetics: "Sour Diesel × Lemon OG", lineage: "Chemdawg × Mass Super Skunk × NL → Sour Diesel | Lemon Skunk × OG Kush → Lemon OG", flavor: "Sharp lemon, sour diesel, citrus peel", effects: "Energetic, focused, mood-boosting", terpenes: "Limonene, Pinene, Caryophyllene", description: "A citrus explosion that hits you right between the eyes. Sour Diesel's legendary energy gets a lemon-forward twist from Lemon OG. Perfect for daytime productivity.", category: "Preroll 1g" },
-  "Space Candy": { type: "Sativa", thc: "20-24%", genetics: "Space Queen × Cotton Candy", lineage: "Romulan × Cinderella 99 → Space Queen | Lavender × Power Plant → Cotton Candy", flavor: "Sweet candy, floral, tropical citrus", effects: "Energetic, creative, happy", terpenes: "Myrcene, Terpinolene, Ocimene", description: "A whimsical sativa that tastes like a candy shop in outer space. Space Queen brings the cosmic energy while Cotton Candy adds layers of sweetness and floral complexity.", category: "Preroll 1g" },
-  "Trainwreck": { type: "Sativa", thc: "22-27%", genetics: "Mexican × Thai × Afghani", lineage: "Mexican sativa × Thai sativa × Afghani indica — originated in Northern California's Emerald Triangle, named for its intense, fast-hitting effects", flavor: "Spicy pine, lemon, earthy pepper", effects: "Fast-hitting euphoria, creative, energetic", terpenes: "Terpinolene, Myrcene, Pinene", description: "A legendary NorCal strain that hits you like its name suggests. Three landrace genetics combine for a spicy, pine-forward sativa that delivers immediate cerebral stimulation.", category: "Preroll 1g" },
-  "Wedding Cake": { type: "Hybrid", thc: "25-30%", genetics: "Cherry Pie × Girl Scout Cookies", lineage: "Granddaddy Purple × Durban Poison → Cherry Pie | OG Kush × Durban Poison → GSC", flavor: "Sweet vanilla frosting, tangy, earthy", effects: "Relaxed, euphoric, happy", terpenes: "Limonene, Caryophyllene, Myrcene", description: "Also known as Pink Cookies — a powerhouse that tastes like a slice of wedding cake. Cherry Pie brings fruity sweetness while GSC adds the beloved cookie dough flavor and balanced effects.", category: "Preroll 1g" },
-  "White Fire OG": { type: "Hybrid", thc: "25-29%", genetics: "Fire OG × The White", lineage: "OG Kush × SFV OG → Fire OG | Unknown triangle cross → The White (famous for trichome production)", flavor: "Earthy, woody, pepper, diesel", effects: "Uplifting, relaxed, focused", terpenes: "Caryophyllene, Limonene, Myrcene", description: "WiFi OG — where Fire OG's intense potency meets The White's legendary frost. Known for snowcapped buds and a clean, peppery diesel flavor that cannabis connoisseurs chase.", category: "Preroll 1g" },
-  "Zoap": { type: "Hybrid", thc: "26-30%", genetics: "Rainbow Sherbet × Pink Guava", lineage: "Champagne × Blackberry → Rainbow Sherbet | Unknown exotic cross → Pink Guava (Deep East Oakland genetics by Deo Farms)", flavor: "Soapy floral, fruity, sweet, berry", effects: "Balanced euphoria, creative, relaxed", terpenes: "Caryophyllene, Limonene, Linalool", description: "Bred by DEO Farms, Zoap took the cannabis world by storm. Its unique soapy-floral-fruit flavor is unlike anything else. Rainbow Sherbet brings color while Pink Guava adds exotic sweetness.", category: "Preroll 1g" },
+  "Honey Banana": { type: "Hybrid", thc: "24-28%", genetics: "Honey Boo Boo × Banana OG", lineage: "Granddaddy Purple × Bukake → Honey Boo Boo | Banana Kush × OG Kush → Banana OG", flavor: "Sweet honey, ripe banana, tropical fruit", effects: "Euphoric, relaxed, creative", terpenes: "Myrcene, Limonene, Caryophyllene", description: "A smooth hybrid that wraps you in sweetness. The Honey Boo Boo parentage brings deep relaxation while Banana OG adds uplifting euphoria.", category: "Preroll 1g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/PRE-Honey-Banana.webp" },
+  "Ice Cream Cookies": { type: "Indica", thc: "26-30%", genetics: "Ice Cream Cake × Girl Scout Cookies", lineage: "Gelato 33 × Wedding Cake → Ice Cream Cake | OG Kush × Durban Poison → GSC", flavor: "Creamy vanilla, sweet dough, earthy", effects: "Sedating, happy, relaxed", terpenes: "Limonene, Caryophyllene, Linalool", description: "A dessert-forward indica that hits like a warm blanket. The Gelato lineage brings creamy smoothness while GSC genetics deliver the punch.", category: "Preroll 1g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/PRE-Ice-Cream-Cookies.webp" },
+  "Jelly Donutz": { type: "Indica", thc: "25-29%", genetics: "Jelly Breath × Dosidos", lineage: "Mendo Breath × Do-Si-Dos → Jelly Breath | Face Off OG × OGKB → Dosidos", flavor: "Sweet berry jam, doughy, sugar glaze", effects: "Relaxed, sleepy, euphoric", terpenes: "Linalool, Myrcene, Limonene", description: "Named for its impossibly sweet, pastry-like flavor. The Mendo Breath genetics bring heavy body relaxation and a sweet, jammy exhale.", category: "Preroll 1g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/PRE-Jelly-Donutz.webp" },
+  "Orange Creampop": { type: "Hybrid", thc: "22-26%", genetics: "Orange Cookies × Cookies & Cream", lineage: "Orange Juice × GSC → Orange Cookies | Starfighter × GSC → Cookies & Cream", flavor: "Citrus burst, vanilla cream, sweet orange", effects: "Uplifting, creative, relaxed", terpenes: "Limonene, Myrcene, Humulene", description: "Like biting into a frozen creamsicle on a summer day. The Orange Cookies parentage delivers bright citrus while the Cookies & Cream adds a creamy finish.", category: "Preroll 1g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/PRE-Orange-Creampop.webp" },
+  "Skittlez": { type: "Indica", thc: "24-28%", genetics: "Zkittlez (Grape Ape × Grapefruit)", lineage: "Mendocino Purps × Afghani → Grape Ape | Grapefruit (Cinderella 99 pheno)", flavor: "Tropical fruit medley, grape, berry", effects: "Calming, euphoric, focused", terpenes: "Caryophyllene, Linalool, Humulene", description: "The legendary Zkittlez delivers a rainbow of fruit flavors. Grape Ape brings the purple color and calm, while Grapefruit genetics add citrusy uplift.", category: "Preroll 1g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/PRE-Skittlez.webp" },
+  "Triple Cake": { type: "Hybrid", thc: "26-30%", genetics: "Triangle Mints × Wedding Cake", lineage: "Triangle Kush × Animal Mints → Triangle Mints | Cherry Pie × GSC → Wedding Cake", flavor: "Sweet cake batter, mint, gas", effects: "Euphoric, relaxed, creative", terpenes: "Limonene, Caryophyllene, Myrcene", description: "Triple the cake, triple the hit. Triangle Mints brings minty gas while Wedding Cake adds layers of sweet, doughy flavor with potent effects.", category: "Preroll 1g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/PRE-Triple-Cake.webp" },
+  "Afghan Kush": { type: "Indica", thc: "20-25%", genetics: "Landrace (Hindu Kush Mountains, Afghanistan)", lineage: "Pure landrace indica — one of cannabis' oldest cultivated strains, originating from the mountainous border of Afghanistan and Pakistan", flavor: "Earthy, woody, sweet hash", effects: "Deeply relaxing, sedating, stress relief", terpenes: "Myrcene, Pinene, Caryophyllene", description: "A pure landrace strain from the Hindu Kush mountain range. Thousands of years of natural selection created this bulletproof indica — the genetic backbone of countless modern hybrids.", category: "Preroll 1g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/PRE-Afghan-Kush.webp" },
+  "AK-47": { type: "Sativa", thc: "20-25%", genetics: "Colombian × Mexican × Thai × Afghan", lineage: "A complex sativa-dominant blend of South American, Mexican, Thai, and Afghani landraces — first crossed in 1992 by Serious Seeds in the Netherlands", flavor: "Earthy, floral, sweet, sour", effects: "Uplifting, creative, alert, social", terpenes: "Myrcene, Pinene, Caryophyllene", description: "Despite its intense name, AK-47 delivers a mellow, steady cerebral buzz. Four landrace genetics combine to create one of the most awarded strains in cannabis history.", category: "Preroll 1g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/PRE-AK-47.webp" },
+  "Blue Dream": { type: "Sativa", thc: "21-26%", genetics: "Blueberry × Haze", lineage: "Afghani × Thai × Purple Thai → Blueberry | Colombian Gold × Thai × Mexican × South Indian → Haze", flavor: "Sweet blueberry, vanilla, herbal", effects: "Balanced euphoria, gentle relaxation, creative", terpenes: "Myrcene, Pinene, Caryophyllene", description: "California's most iconic strain. The legendary DJ Short Blueberry brings sweet berry flavor while Haze genetics deliver soaring, clear-headed energy. The perfect balance.", category: "Preroll 1g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/PRE-Blue-Dream.webp" },
+  "Cap Junky": { type: "Hybrid", thc: "28-33%", genetics: "Alien Cookies × Kush Mints #11", lineage: "GSC × Alien Dawg → Alien Cookies | Bubba Kush × Animal Mints → Kush Mints", flavor: "Minty gas, earthy funk, sweet cream", effects: "Potent euphoria, creative, relaxed", terpenes: "Limonene, Caryophyllene, Myrcene", description: "A top-shelf powerhouse crossing two cookie-family heavyweights. Alien Cookies brings the funk while Kush Mints adds a frosty, gassy edge. Extremely high THC.", category: "Preroll 1g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/PRE-Cap-Junky.webp" },
+  "Chernobyl": { type: "Hybrid", thc: "22-26%", genetics: "Trainwreck × Jack the Ripper", lineage: "Mexican × Thai × Afghani → Trainwreck | Jack's Cleaner × Space Queen → Jack the Ripper", flavor: "Lime sherbet, tropical citrus, sweet", effects: "Energetic, uplifting, giggly", terpenes: "Terpinolene, Myrcene, Ocimene", description: "Created by TGA Subcool, Chernobyl is famous for its nuclear-green buds and radioactive lime flavor. Trainwreck provides the energy while Jack the Ripper adds a sweet citrus kick.", category: "Preroll 1g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/PRE-Chernobyl.webp" },
+  "Cookie Crush": { type: "Hybrid", thc: "25-29%", genetics: "GSC × OG Kush", lineage: "Durban Poison × OG Kush → GSC | Chemdawg × Hindu Kush → OG Kush", flavor: "Sweet cookies, earthy pine, vanilla", effects: "Euphoric, relaxed, happy", terpenes: "Caryophyllene, Limonene, Humulene", description: "A double dose of the Cookie family's best traits. Girl Scout Cookies brings the sweet, doughy flavor while OG Kush reinforces the potent, relaxing backbone.", category: "Preroll 1g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/PRE-Cookie-Crush.webp" },
+  "Death Star": { type: "Indica", thc: "24-28%", genetics: "Sensi Star × Sour Diesel", lineage: "Afghani indica hybrid → Sensi Star | Chemdawg × Mass Super Skunk × Northern Lights → Sour Diesel", flavor: "Diesel fuel, earthy, sweet skunk", effects: "Heavy relaxation, euphoric, sleepy", terpenes: "Myrcene, Caryophyllene, Limonene", description: "Named for its ability to destroy stress. Sensi Star brings the indica weight while Sour Diesel adds a sativa-leaning cerebral sparkle and pungent fuel aroma.", category: "Preroll 1g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/PRE-Death-Star.webp" },
+  "Garlic Budder": { type: "Indica", thc: "26-30%", genetics: "GMO × Peanut Butter Breath", lineage: "Chemdawg × GSC → GMO (Garlic Mushroom Onion) | Do-Si-Dos × Mendo Breath → Peanut Butter Breath", flavor: "Garlic, savory, creamy, funky", effects: "Heavy body, relaxed, sedating", terpenes: "Caryophyllene, Myrcene, Limonene", description: "For the savory palate — GMO's unmistakable garlic funk meets the creamy, nutty smoothness of Peanut Butter Breath. One of the most unique flavor profiles in the game.", category: "Preroll 1g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/PRE-Garlic-Budder.webp" },
+  "GG#4": { type: "Hybrid", thc: "25-30%", genetics: "Chem's Sister × Sour Dubb × Chocolate Diesel", lineage: "Chemdawg sibling → Chem's Sister | Sour Diesel phenotype → Sour Dubb | Sour Diesel × Chocolate Trip → Chocolate Diesel", flavor: "Pine, earthy chocolate, diesel", effects: "Glued-to-couch, euphoric, relaxed", terpenes: "Caryophyllene, Myrcene, Limonene", description: "The legendary GG#4 (Gorilla Glue) — an accidental cross that became one of cannabis' most celebrated strains. Named for the resin that sticks to everything during trimming.", category: "Preroll 1g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/PRE-GG4.webp" },
+  "Green Crack": { type: "Sativa", thc: "20-25%", genetics: "Skunk #1 × Unknown Indica (disputed Afghani)", lineage: "Originally named 'Cush' — renamed by Snoop Dogg for its energizing effects. Descended from Skunk #1 lineage with possible Sweet Leaf/Afghani genetics", flavor: "Citrus mango, tropical, sweet", effects: "Energetic, focused, uplifting", terpenes: "Myrcene, Pinene, Caryophyllene", description: "The ultimate wake-and-bake strain. Delivers a tangy, fruity flavor and sharp mental energy. Snoop renamed it for the intense, invigorating rush it delivers.", category: "Preroll 1g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/PRE-Green-Crack.webp" },
+  "Headband": { type: "Hybrid", thc: "24-28%", genetics: "OG Kush × Sour Diesel", lineage: "Chemdawg × Hindu Kush → OG Kush | Chemdawg × Mass Super Skunk × Northern Lights → Sour Diesel", flavor: "Creamy lemon, diesel, earthy", effects: "Cerebral pressure, relaxed, euphoric", terpenes: "Myrcene, Limonene, Caryophyllene", description: "Named for the subtle pressure you feel around your temples — like wearing an invisible headband. Two of cannabis' greatest strains combine for smooth, long-lasting effects.", category: "Preroll 1g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/PRE-Headband.webp" },
+  "Jealousy": { type: "Hybrid", thc: "27-31%", genetics: "Gelato 41 × Sherbert", lineage: "Sunset Sherbet × Thin Mint GSC → Gelato 41 | GSC × Pink Panties → Sherbert", flavor: "Creamy gelato, candy, berry", effects: "Balanced, euphoric, creative, calm", terpenes: "Caryophyllene, Limonene, Linalool", description: "Bred by Seed Junky Genetics, Jealousy lives up to the hype. Dense, purple-tinted buds deliver a creamy, candy-like flavor and perfectly balanced effects.", category: "Preroll 1g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/PRE-Jealousy.webp" },
+  "Jet Fuel Gelato": { type: "Hybrid", thc: "27-32%", genetics: "Jet Fuel × Gelato", lineage: "Aspen OG × High Country Diesel → Jet Fuel | Sunset Sherbet × Thin Mint GSC → Gelato", flavor: "Gas, sweet cream, diesel, berry", effects: "Potent euphoria, energetic, relaxed", terpenes: "Caryophyllene, Limonene, Myrcene", description: "High-octane meets creamy dessert. Jet Fuel brings the gas-forward punch while Gelato smooths it out with sweet, creamy undertones. A premium hybrid experience.", category: "Preroll 1g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/PRE-Jet-Fuel-Gelato.webp" },
+  "Kush Mintz": { type: "Hybrid", thc: "27-32%", genetics: "Animal Mints × Bubba Kush", lineage: "Thin Mint GSC × Fire OG × Animal Cookies → Animal Mints | OG Kush × Afghani → Bubba Kush", flavor: "Minty, earthy, sweet, coffee", effects: "Relaxing, euphoric, calming", terpenes: "Limonene, Caryophyllene, Myrcene", description: "Seed Junky's masterpiece. The Animal Mints gives it that frosty mint flavor while Bubba Kush adds old-school body sedation. A modern classic with legendary parents.", category: "Preroll 1g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/PRE-Kush-Mintz.webp" },
+  "Lemon Pound Cake": { type: "Hybrid", thc: "23-27%", genetics: "Lemon Skunk × Cheese", lineage: "Lemon Joy × Skunk #1 → Lemon Skunk | Skunk #1 phenotype → Cheese", flavor: "Lemon zest, buttery cake, sweet cream", effects: "Uplifting, social, relaxed", terpenes: "Limonene, Caryophyllene, Humulene", description: "Exactly what it sounds like — a rich, buttery lemon cake flavor that coats the palate. The Lemon Skunk parentage provides zesty brightness while Cheese adds depth and body.", category: "Preroll 1g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/PRE-Lemon-Pound-Cake.webp" },
+  "Liberty Haze": { type: "Sativa", thc: "22-27%", genetics: "G13 × ChemDawg 91", lineage: "Government G13 (legendary Afghani indica) × ChemDawg 91 (Chemdawg phenotype) — bred by Barney's Farm, 2011 Cannabis Cup winner", flavor: "Sharp lime, earthy, chemical, sweet", effects: "Energetic, creative, cerebral", terpenes: "Terpinolene, Myrcene, Pinene", description: "A Cannabis Cup champion from Barney's Farm. The mythical G13 brings potency while ChemDawg 91 adds electric sativa energy. Named for the freedom it gives your mind.", category: "Preroll 1g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/PRE-Liberty-Haze.webp" },
+  "Northern Lights": { type: "Indica", thc: "20-24%", genetics: "Afghani × Thai", lineage: "Pure Afghani indica landrace × Thai sativa landrace — originally cultivated in Seattle, perfected by Sensi Seeds in the Netherlands in the 1980s", flavor: "Sweet earth, pine, honey", effects: "Full body relaxation, dreamy, sleepy", terpenes: "Myrcene, Pinene, Caryophyllene", description: "One of the most famous indicas ever created. Northern Lights has been a cornerstone of cannabis breeding since the 1980s — a two-time Cannabis Cup winner and parent to countless hybrids.", category: "Preroll 1g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/PRE-Northern-Lights.webp" },
+  "NYC Diesel": { type: "Hybrid", thc: "21-25%", genetics: "Mexican Sativa × Afghani", lineage: "Soma Seeds creation — Mexican sativa landrace × Afghani indica with possible Sour Diesel influence. A New York City staple since the early 2000s", flavor: "Grapefruit diesel, lime, red berry", effects: "Cerebral, talkative, creative, happy", terpenes: "Limonene, Myrcene, Caryophyllene", description: "Born in the Big Apple. NYC Diesel captures the electric energy of the city in a joint — bright citrus and diesel fuel aroma with a creative, social buzz that keeps the conversation flowing.", category: "Preroll 1g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/PRE-NYC-Diesel.webp" },
+  "NYC Kush": { type: "Indica", thc: "28-32%", genetics: "NYC Diesel × OG Kush", lineage: "NYC Diesel (Mexican Sativa × Afghani) × OG Kush (Chemdawg × Hindu Kush) — a potent cross blending NYC's signature diesel funk with the legendary OG Kush backbone", flavor: "Diesel, earthy pine, sweet citrus, spice", effects: "Heavy relaxation, euphoric, cerebral, stress relief", terpenes: "Myrcene, Limonene, Caryophyllene", description: "The best of both coasts collide. NYC Diesel's electric cerebral energy meets OG Kush's legendary body-melting potency. A powerhouse indica-leaning hybrid that hits hard at 30%+ THC — true New York muscle.", category: "Preroll 1g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/PRE-NYC-Kush.webp" },
+  "Skywalker OG": { type: "Indica", thc: "25-30%", genetics: "Skywalker × OG Kush", lineage: "Blueberry × Mazar I Sharif → Skywalker | Chemdawg × Hindu Kush → OG Kush", flavor: "Earthy pine, spicy, herbal", effects: "Heavy sedation, euphoric, tranquil", terpenes: "Myrcene, Caryophyllene, Limonene", description: "The force is strong with this one. Skywalker's Blueberry-Afghan heritage meets the unmatched potency of OG Kush for a deeply sedating experience that sends you to a galaxy far, far away.", category: "Preroll 1g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/PRE-Skywalker-OG.webp" },
+  "Sour Lemons": { type: "Sativa", thc: "22-26%", genetics: "Sour Diesel × Lemon OG", lineage: "Chemdawg × Mass Super Skunk × NL → Sour Diesel | Lemon Skunk × OG Kush → Lemon OG", flavor: "Sharp lemon, sour diesel, citrus peel", effects: "Energetic, focused, mood-boosting", terpenes: "Limonene, Pinene, Caryophyllene", description: "A citrus explosion that hits you right between the eyes. Sour Diesel's legendary energy gets a lemon-forward twist from Lemon OG. Perfect for daytime productivity.", category: "Preroll 1g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/PRE-Sour-Lemons.webp" },
+  "Space Candy": { type: "Sativa", thc: "20-24%", genetics: "Space Queen × Cotton Candy", lineage: "Romulan × Cinderella 99 → Space Queen | Lavender × Power Plant → Cotton Candy", flavor: "Sweet candy, floral, tropical citrus", effects: "Energetic, creative, happy", terpenes: "Myrcene, Terpinolene, Ocimene", description: "A whimsical sativa that tastes like a candy shop in outer space. Space Queen brings the cosmic energy while Cotton Candy adds layers of sweetness and floral complexity.", category: "Preroll 1g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/PRE-Space-Candy.webp" },
+  "Trainwreck": { type: "Sativa", thc: "22-27%", genetics: "Mexican × Thai × Afghani", lineage: "Mexican sativa × Thai sativa × Afghani indica — originated in Northern California's Emerald Triangle, named for its intense, fast-hitting effects", flavor: "Spicy pine, lemon, earthy pepper", effects: "Fast-hitting euphoria, creative, energetic", terpenes: "Terpinolene, Myrcene, Pinene", description: "A legendary NorCal strain that hits you like its name suggests. Three landrace genetics combine for a spicy, pine-forward sativa that delivers immediate cerebral stimulation.", category: "Preroll 1g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/PRE-Trainwreck.webp" },
+  "Wedding Cake": { type: "Hybrid", thc: "25-30%", genetics: "Cherry Pie × Girl Scout Cookies", lineage: "Granddaddy Purple × Durban Poison → Cherry Pie | OG Kush × Durban Poison → GSC", flavor: "Sweet vanilla frosting, tangy, earthy", effects: "Relaxed, euphoric, happy", terpenes: "Limonene, Caryophyllene, Myrcene", description: "Also known as Pink Cookies — a powerhouse that tastes like a slice of wedding cake. Cherry Pie brings fruity sweetness while GSC adds the beloved cookie dough flavor and balanced effects.", category: "Preroll 1g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/PRE-Wedding-Cake.webp" },
+  "White Fire OG": { type: "Hybrid", thc: "25-29%", genetics: "Fire OG × The White", lineage: "OG Kush × SFV OG → Fire OG | Unknown triangle cross → The White (famous for trichome production)", flavor: "Earthy, woody, pepper, diesel", effects: "Uplifting, relaxed, focused", terpenes: "Caryophyllene, Limonene, Myrcene", description: "WiFi OG — where Fire OG's intense potency meets The White's legendary frost. Known for snowcapped buds and a clean, peppery diesel flavor that cannabis connoisseurs chase.", category: "Preroll 1g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/PRE-White-Fire-OG.webp" },
+  "Zoap": { type: "Hybrid", thc: "26-30%", genetics: "Rainbow Sherbet × Pink Guava", lineage: "Champagne × Blackberry → Rainbow Sherbet | Unknown exotic cross → Pink Guava (Deep East Oakland genetics by Deo Farms)", flavor: "Soapy floral, fruity, sweet, berry", effects: "Balanced euphoria, creative, relaxed", terpenes: "Caryophyllene, Limonene, Linalool", description: "Bred by DEO Farms, Zoap took the cannabis world by storm. Its unique soapy-floral-fruit flavor is unlike anything else. Rainbow Sherbet brings color while Pink Guava adds exotic sweetness.", category: "Preroll 1g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/PRE-Zoap.webp" },
   // Infused Prerolls
-  "Banana Bash": { type: "Hybrid", thc: "35-40%+", genetics: "Banana Kush × Hindu Kush (Infused)", lineage: "Ghost OG × Skunk Haze → Banana Kush | Hindu Kush landrace — enhanced with live resin concentrate for amplified potency", flavor: "Banana cream, sweet tropical, earthy hash", effects: "Powerful euphoria, deeply relaxed, blissful", terpenes: "Myrcene, Limonene, Caryophyllene", description: "An infused powerhouse. The Banana Kush base delivers sweet tropical flavor, amplified with concentrate for an elevated experience. Not for beginners.", category: "Infused Preroll 1.25g" },
-  "Blueberry Banana Waffles": { type: "Indica", thc: "35-40%+", genetics: "Blueberry × Banana OG (Infused)", lineage: "DJ Short's Blueberry (Afghani × Thai × Purple Thai) × Banana OG — infused with premium concentrate", flavor: "Blueberry pancakes, banana bread, maple", effects: "Sedating, euphoric, munchies", terpenes: "Myrcene, Limonene, Linalool", description: "Breakfast in a joint. DJ Short's legendary Blueberry meets Banana OG, then gets infused for maximum impact. The flavor literally tastes like blueberry banana waffles.", category: "Infused Preroll 1.25g" },
-  "Just Peachy": { type: "Hybrid", thc: "35-40%+", genetics: "Georgia Pie × Peach Ringz (Infused)", lineage: "Gelatti × Kush Mints → Georgia Pie | Unknown exotic cross → Peach Ringz — enhanced with live resin", flavor: "Fresh peach, candy rings, sweet cream", effects: "Uplifting, euphoric, relaxed", terpenes: "Limonene, Myrcene, Caryophyllene", description: "Georgia Pie's candy-forward genetics meet Peach Ringz for a fruity experience that tastes exactly like the candy. Infusion pushes potency into the stratosphere.", category: "Infused Preroll 1.25g" },
-  "Lychee Dream": { type: "Sativa", thc: "35-40%+", genetics: "Lychee × Dream (Infused)", lineage: "Exotic lychee-flavored cultivar crossed with dreamy sativa genetics — infused with premium concentrate for enhanced potency", flavor: "Sweet lychee fruit, floral, tropical", effects: "Creative, uplifting, dreamy euphoria", terpenes: "Terpinolene, Myrcene, Ocimene", description: "An exotic sativa-leaning infused preroll that captures the unmistakable sweetness of fresh lychee fruit. The infusion adds layers of potency while maintaining the delicate flavor profile.", category: "Infused Preroll 1.25g" },
-  "Strawberry Kiwi": { type: "Hybrid", thc: "35-40%+", genetics: "Strawberry Cough × Kiwi Kush (Infused)", lineage: "Strawberry Fields × Haze → Strawberry Cough | Kiwi-flavored OG phenotype → Kiwi Kush — infused with concentrate", flavor: "Fresh strawberry, kiwi tang, sweet berry", effects: "Happy, social, relaxed", terpenes: "Myrcene, Limonene, Pinene", description: "The classic juice box flavor in an infused joint. Strawberry Cough's legendary berry flavor gets a tropical twist from Kiwi Kush, then concentrated infusion takes it next level.", category: "Infused Preroll 1.25g" },
-  "Watermelon Skittlez": { type: "Indica", thc: "35-40%+", genetics: "Watermelon Zkittlez × Zkittlez (Infused)", lineage: "Watermelon phenotype × Zkittlez (Grape Ape × Grapefruit) — infused with premium live resin concentrate", flavor: "Juicy watermelon, candy, tropical fruit", effects: "Deeply relaxing, euphoric, sleepy", terpenes: "Myrcene, Caryophyllene, Limonene", description: "Summer in an infused preroll. The Watermelon phenotype brings juicy, refreshing flavor while Zkittlez adds that famous rainbow fruit candy sweetness. Infusion makes it a heavy hitter.", category: "Infused Preroll 1.25g" },
+  "Banana Bash": { type: "Hybrid", thc: "35-40%+", genetics: "Banana Kush × Hindu Kush (Infused)", lineage: "Ghost OG × Skunk Haze → Banana Kush | Hindu Kush landrace — enhanced with live resin concentrate for amplified potency", flavor: "Banana cream, sweet tropical, earthy hash", effects: "Powerful euphoria, deeply relaxed, blissful", terpenes: "Myrcene, Limonene, Caryophyllene", description: "An infused powerhouse. The Banana Kush base delivers sweet tropical flavor, amplified with concentrate for an elevated experience. Not for beginners.", category: "Infused Preroll 1.25g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/INF-Banana-Bash.jpg" },
+  "Blueberry Banana Waffles": { type: "Indica", thc: "35-40%+", genetics: "Blueberry × Banana OG (Infused)", lineage: "DJ Short's Blueberry (Afghani × Thai × Purple Thai) × Banana OG — infused with premium concentrate", flavor: "Blueberry pancakes, banana bread, maple", effects: "Sedating, euphoric, munchies", terpenes: "Myrcene, Limonene, Linalool", description: "Breakfast in a joint. DJ Short's legendary Blueberry meets Banana OG, then gets infused for maximum impact. The flavor literally tastes like blueberry banana waffles.", category: "Infused Preroll 1.25g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/INF-Blueberry-Banana-Waffles.jpg" },
+  "Just Peachy": { type: "Hybrid", thc: "35-40%+", genetics: "Georgia Pie × Peach Ringz (Infused)", lineage: "Gelatti × Kush Mints → Georgia Pie | Unknown exotic cross → Peach Ringz — enhanced with live resin", flavor: "Fresh peach, candy rings, sweet cream", effects: "Uplifting, euphoric, relaxed", terpenes: "Limonene, Myrcene, Caryophyllene", description: "Georgia Pie's candy-forward genetics meet Peach Ringz for a fruity experience that tastes exactly like the candy. Infusion pushes potency into the stratosphere.", category: "Infused Preroll 1.25g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/INF-Just-Peachy.jpg" },
+  "Lychee Dream": { type: "Sativa", thc: "35-40%+", genetics: "Lychee × Dream (Infused)", lineage: "Exotic lychee-flavored cultivar crossed with dreamy sativa genetics — infused with premium concentrate for enhanced potency", flavor: "Sweet lychee fruit, floral, tropical", effects: "Creative, uplifting, dreamy euphoria", terpenes: "Terpinolene, Myrcene, Ocimene", description: "An exotic sativa-leaning infused preroll that captures the unmistakable sweetness of fresh lychee fruit. The infusion adds layers of potency while maintaining the delicate flavor profile.", category: "Infused Preroll 1.25g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/INF-Lychee-Dream.jpg" },
+  "Strawberry Kiwi": { type: "Hybrid", thc: "35-40%+", genetics: "Strawberry Cough × Kiwi Kush (Infused)", lineage: "Strawberry Fields × Haze → Strawberry Cough | Kiwi-flavored OG phenotype → Kiwi Kush — infused with concentrate", flavor: "Fresh strawberry, kiwi tang, sweet berry", effects: "Happy, social, relaxed", terpenes: "Myrcene, Limonene, Pinene", description: "The classic juice box flavor in an infused joint. Strawberry Cough's legendary berry flavor gets a tropical twist from Kiwi Kush, then concentrated infusion takes it next level.", category: "Infused Preroll 1.25g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/INF-Strawberry-Kiwi.jpg" },
+  "Watermelon Skittlez": { type: "Indica", thc: "35-40%+", genetics: "Watermelon Zkittlez × Zkittlez (Infused)", lineage: "Watermelon phenotype × Zkittlez (Grape Ape × Grapefruit) — infused with premium live resin concentrate", flavor: "Juicy watermelon, candy, tropical fruit", effects: "Deeply relaxing, euphoric, sleepy", terpenes: "Myrcene, Caryophyllene, Limonene", description: "Summer in an infused preroll. The Watermelon phenotype brings juicy, refreshing flavor while Zkittlez adds that famous rainbow fruit candy sweetness. Infusion makes it a heavy hitter.", category: "Infused Preroll 1.25g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/INF-Watermelon-Skittlez.jpg" },
   // Flower
-  "Chem 91": { type: "Sativa", thc: "24-28%", genetics: "Chemdawg 91 (Original Chemdog cut)", lineage: "One of the original Chemdawg cuts — secured at a Grateful Dead concert in 1991. The genetic ancestor of OG Kush, Sour Diesel, and countless modern strains", flavor: "Sharp chemical, diesel, pine, funk", effects: "Cerebral, creative, focused, uplifting", terpenes: "Caryophyllene, Myrcene, Limonene", description: "Cannabis royalty. Chem 91 is THE original Chemdog cut from the Grateful Dead era — the genetic foundation that birthed OG Kush and Sour Diesel. Pure East Coast history in every nug.", category: "Flower 3.5g" },
-  "Banana Cream Pie": { type: "Indica", thc: "24-28%", genetics: "Banana OG × Cookies & Cream", lineage: "Banana Kush × OG Kush → Banana OG | Starfighter × GSC → Cookies & Cream", flavor: "Banana cream, vanilla custard, sweet dough", effects: "Relaxed, euphoric, sleepy, happy", terpenes: "Myrcene, Limonene, Caryophyllene", description: "Dessert genetics at their finest. Banana OG's tropical sweetness meets Cookies & Cream's rich vanilla. Like eating a banana cream pie that melts every muscle in your body.", category: "Flower 3.5g" },
-  "Black Maple": { type: "Indica", thc: "25-29%", genetics: "Black Diamond × Maple Leaf Indica", lineage: "Blackberry × Diamond OG → Black Diamond | Afghani landrace selection → Maple Leaf Indica (Sensi Seeds)", flavor: "Dark maple syrup, earthy, sweet berry", effects: "Deep relaxation, sedating, pain relief", terpenes: "Myrcene, Caryophyllene, Humulene", description: "A dark, mysterious indica that pours like liquid maple. Black Diamond's purple, berry-forward profile meets Maple Leaf's old-school Afghani warmth for a nighttime knockout.", category: "Flower 3.5g" },
-  "Candy Fumez": { type: "Hybrid", thc: "26-30%", genetics: "Candy Rain × Sherbinski Grapefruit", lineage: "London Pound Cake × Gushers → Candy Rain | Sherbinski's Grapefruit phenotype selection", flavor: "Sweet candy, grapefruit, gasoline", effects: "Euphoric, creative, relaxed, social", terpenes: "Limonene, Caryophyllene, Myrcene", description: "A candy store meets a gas station in the best way possible. The London Pound Cake lineage in Candy Rain brings sweetness while Grapefruit adds a bright citrus-gas contrast.", category: "Flower 3.5g" },
-  "Carbon Fiber": { type: "Hybrid", thc: "27-31%", genetics: "Grape Pie × Biscotti", lineage: "Cherry Pie × Grape Stomper → Grape Pie | Gelato 25 × South Florida OG → Biscotti", flavor: "Fruity, nutty, earthy, grape", effects: "Balanced, creative, calm focus", terpenes: "Caryophyllene, Limonene, Humulene", description: "Sleek, potent, and engineered for performance — just like its namesake material. Grape Pie brings the fruity density while Biscotti adds toasted, nutty complexity.", category: "Flower 3.5g" },
-  "Dulce De Uva": { type: "Indica", thc: "25-29%", genetics: "Grape Cream Cake × Dulce", lineage: "Grape-dominant exotic phenotype × Dulce (sweet Latin-inspired cultivar)", flavor: "Grape jam, caramel, sweet cream", effects: "Relaxed, happy, dreamy, sweet", terpenes: "Myrcene, Linalool, Caryophyllene", description: "The name says it all — 'Grape Sweetness' in Spanish. Rich grape jam flavor with caramel undertones. An indica that wraps you in a warm, dreamy sweetness.", category: "Flower 3.5g" },
-  "GSC": { type: "Hybrid", thc: "25-29%", genetics: "OG Kush × Durban Poison", lineage: "Chemdawg × Hindu Kush → OG Kush | South African sativa landrace → Durban Poison — originally bred by the Cookie Family in San Francisco", flavor: "Sweet cookie dough, earthy, mint", effects: "Euphoric, creative, full-body relaxed", terpenes: "Caryophyllene, Limonene, Humulene", description: "Girl Scout Cookies — the strain that launched a thousand crosses. Born in San Francisco, GSC changed cannabis forever. OG Kush's potency meets Durban Poison's euphoric energy.", category: "Flower 3.5g" },
-  "Jelly Donut": { type: "Indica", thc: "25-29%", genetics: "Jelly Breath × Dosidos", lineage: "Mendo Breath × Do-Si-Dos → Jelly Breath | Face Off OG × OGKB → Dosidos", flavor: "Sweet berry jam, doughy, sugar glaze", effects: "Relaxed, sleepy, euphoric", terpenes: "Linalool, Myrcene, Limonene", description: "The flower version of the preroll favorite. Dense, purple buds that smell exactly like a fresh jelly donut. Mendo Breath genetics bring heavy relaxation with a sweet, jammy finish.", category: "Flower 3.5g" },
-  "Lemon Cherry Gelato": { type: "Hybrid", thc: "26-30%", genetics: "Sunset Sherbet × Girl Scout Cookies × (Lemon × Cherry)", lineage: "Part of the Gelato family — Sunset Sherbet × Thin Mint GSC base with lemon and cherry phenotype expression selected by Backpackboyz", flavor: "Lemon zest, cherry candy, creamy gelato", effects: "Uplifting, creative, relaxed, social", terpenes: "Limonene, Caryophyllene, Linalool", description: "The most hyped Gelato phenotype in recent years. Bright lemon and cherry flavors shine through a creamy gelato base. The buds are dense, purple, and absolutely caked in trichomes.", category: "Flower 3.5g" },
-  "Nascar": { type: "Sativa", thc: "24-28%", genetics: "GMO × Trophy Wife", lineage: "Chemdawg × GSC → GMO | Unknown high-octane sativa cross → Trophy Wife", flavor: "Gassy, garlic, spicy, chemical", effects: "Fast-hitting energy, focused, creative", terpenes: "Caryophyllene, Myrcene, Limonene", description: "Pedal to the metal. Nascar takes GMO's pungent garlic gas and adds Trophy Wife's racing sativa energy. Named for the speed at which the effects hit you — full throttle from the first pull.", category: "Flower 3.5g" },
-  "Pinnacle": { type: "Hybrid", thc: "27-31%", genetics: "Runtz × Gelato", lineage: "Zkittlez × Gelato → Runtz | Sunset Sherbet × Thin Mint GSC → Gelato", flavor: "Sweet candy, creamy, tropical fruit", effects: "Peak euphoria, balanced, creative", terpenes: "Limonene, Caryophyllene, Linalool", description: "The name says it all — this is the peak. Runtz's candy sweetness meets Gelato's creamy smoothness. Dense, colorful buds deliver what might be the most enjoyable smoke in the Dragonfly lineup.", category: "Flower 3.5g" },
+  "Chem 91": { type: "Sativa", thc: "24-28%", genetics: "Chemdawg 91 (Original Chemdog cut)", lineage: "One of the original Chemdawg cuts — secured at a Grateful Dead concert in 1991. The genetic ancestor of OG Kush, Sour Diesel, and countless modern strains", flavor: "Sharp chemical, diesel, pine, funk", effects: "Cerebral, creative, focused, uplifting", terpenes: "Caryophyllene, Myrcene, Limonene", description: "Cannabis royalty. Chem 91 is THE original Chemdog cut from the Grateful Dead era — the genetic foundation that birthed OG Kush and Sour Diesel. Pure East Coast history in every nug.", category: "Flower 3.5g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/FLW-Chem-91.webp" },
+  "Banana Cream Pie": { type: "Indica", thc: "24-28%", genetics: "Banana OG × Cookies & Cream", lineage: "Banana Kush × OG Kush → Banana OG | Starfighter × GSC → Cookies & Cream", flavor: "Banana cream, vanilla custard, sweet dough", effects: "Relaxed, euphoric, sleepy, happy", terpenes: "Myrcene, Limonene, Caryophyllene", description: "Dessert genetics at their finest. Banana OG's tropical sweetness meets Cookies & Cream's rich vanilla. Like eating a banana cream pie that melts every muscle in your body.", category: "Flower 3.5g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/FLW-Banana-Cream-Pie.webp" },
+  "Black Maple": { type: "Indica", thc: "25-29%", genetics: "Black Diamond × Maple Leaf Indica", lineage: "Blackberry × Diamond OG → Black Diamond | Afghani landrace selection → Maple Leaf Indica (Sensi Seeds)", flavor: "Dark maple syrup, earthy, sweet berry", effects: "Deep relaxation, sedating, pain relief", terpenes: "Myrcene, Caryophyllene, Humulene", description: "A dark, mysterious indica that pours like liquid maple. Black Diamond's purple, berry-forward profile meets Maple Leaf's old-school Afghani warmth for a nighttime knockout.", category: "Flower 3.5g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/FLW-Black-Maple.webp" },
+  "Candy Fumez": { type: "Hybrid", thc: "26-30%", genetics: "Candy Rain × Sherbinski Grapefruit", lineage: "London Pound Cake × Gushers → Candy Rain | Sherbinski's Grapefruit phenotype selection", flavor: "Sweet candy, grapefruit, gasoline", effects: "Euphoric, creative, relaxed, social", terpenes: "Limonene, Caryophyllene, Myrcene", description: "A candy store meets a gas station in the best way possible. The London Pound Cake lineage in Candy Rain brings sweetness while Grapefruit adds a bright citrus-gas contrast.", category: "Flower 3.5g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/FLW-Candy-Fumez.webp" },
+  "Carbon Fiber": { type: "Hybrid", thc: "27-31%", genetics: "Grape Pie × Biscotti", lineage: "Cherry Pie × Grape Stomper → Grape Pie | Gelato 25 × South Florida OG → Biscotti", flavor: "Fruity, nutty, earthy, grape", effects: "Balanced, creative, calm focus", terpenes: "Caryophyllene, Limonene, Humulene", description: "Sleek, potent, and engineered for performance — just like its namesake material. Grape Pie brings the fruity density while Biscotti adds toasted, nutty complexity.", category: "Flower 3.5g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/FLW-Carbon-Fiber.webp" },
+  "Dulce De Uva": { type: "Indica", thc: "25-29%", genetics: "Grape Cream Cake × Dulce", lineage: "Grape-dominant exotic phenotype × Dulce (sweet Latin-inspired cultivar)", flavor: "Grape jam, caramel, sweet cream", effects: "Relaxed, happy, dreamy, sweet", terpenes: "Myrcene, Linalool, Caryophyllene", description: "The name says it all — 'Grape Sweetness' in Spanish. Rich grape jam flavor with caramel undertones. An indica that wraps you in a warm, dreamy sweetness.", category: "Flower 3.5g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/FLW-Dulce-De-Uva.webp" },
+  "GSC": { type: "Hybrid", thc: "25-29%", genetics: "OG Kush × Durban Poison", lineage: "Chemdawg × Hindu Kush → OG Kush | South African sativa landrace → Durban Poison — originally bred by the Cookie Family in San Francisco", flavor: "Sweet cookie dough, earthy, mint", effects: "Euphoric, creative, full-body relaxed", terpenes: "Caryophyllene, Limonene, Humulene", description: "Girl Scout Cookies — the strain that launched a thousand crosses. Born in San Francisco, GSC changed cannabis forever. OG Kush's potency meets Durban Poison's euphoric energy.", category: "Flower 3.5g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/FLW-GSC.webp" },
+  "Jelly Donut": { type: "Indica", thc: "25-29%", genetics: "Jelly Breath × Dosidos", lineage: "Mendo Breath × Do-Si-Dos → Jelly Breath | Face Off OG × OGKB → Dosidos", flavor: "Sweet berry jam, doughy, sugar glaze", effects: "Relaxed, sleepy, euphoric", terpenes: "Linalool, Myrcene, Limonene", description: "The flower version of the preroll favorite. Dense, purple buds that smell exactly like a fresh jelly donut. Mendo Breath genetics bring heavy relaxation with a sweet, jammy finish.", category: "Flower 3.5g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/FLW-Jelly-Donut.webp" },
+  "Lemon Cherry Gelato": { type: "Hybrid", thc: "26-30%", genetics: "Sunset Sherbet × Girl Scout Cookies × (Lemon × Cherry)", lineage: "Part of the Gelato family — Sunset Sherbet × Thin Mint GSC base with lemon and cherry phenotype expression selected by Backpackboyz", flavor: "Lemon zest, cherry candy, creamy gelato", effects: "Uplifting, creative, relaxed, social", terpenes: "Limonene, Caryophyllene, Linalool", description: "The most hyped Gelato phenotype in recent years. Bright lemon and cherry flavors shine through a creamy gelato base. The buds are dense, purple, and absolutely caked in trichomes.", category: "Flower 3.5g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/FLW-Lemon-Cherry-Gelato.webp" },
+  "Nascar": { type: "Sativa", thc: "24-28%", genetics: "GMO × Trophy Wife", lineage: "Chemdawg × GSC → GMO | Unknown high-octane sativa cross → Trophy Wife", flavor: "Gassy, garlic, spicy, chemical", effects: "Fast-hitting energy, focused, creative", terpenes: "Caryophyllene, Myrcene, Limonene", description: "Pedal to the metal. Nascar takes GMO's pungent garlic gas and adds Trophy Wife's racing sativa energy. Named for the speed at which the effects hit you — full throttle from the first pull.", category: "Flower 3.5g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/FLW-Nascar.webp" },
+  "Pinnacle": { type: "Hybrid", thc: "27-31%", genetics: "Runtz × Gelato", lineage: "Zkittlez × Gelato → Runtz | Sunset Sherbet × Thin Mint GSC → Gelato", flavor: "Sweet candy, creamy, tropical fruit", effects: "Peak euphoria, balanced, creative", terpenes: "Limonene, Caryophyllene, Linalool", description: "The name says it all — this is the peak. Runtz's candy sweetness meets Gelato's creamy smoothness. Dense, colorful buds deliver what might be the most enjoyable smoke in the Dragonfly lineup.", category: "Flower 3.5g" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/FLW-Pinnacle.webp" },
   // 1oz
-  "Creme De Menthe": { type: "Hybrid", thc: "24-28%", genetics: "Kush Mints × Gelato", lineage: "Animal Mints × Bubba Kush → Kush Mints | Sunset Sherbet × Thin Mint GSC → Gelato", flavor: "Cool mint, cream, sweet chocolate", effects: "Relaxed, uplifting, minty fresh", terpenes: "Limonene, Caryophyllene, Myrcene", description: "An after-dinner mint in flower form. Kush Mints brings the cool minty frost while Gelato adds creamy sweetness. Premium full ounce for the true connoisseur.", category: "1oz Premium Flower" },
-  "Frost": { type: "Hybrid", thc: "26-30%", genetics: "Ice Cap × White Truffle", lineage: "Frozen Gelato × Ice Cream Cake → Ice Cap | Gorilla Butter phenotype → White Truffle", flavor: "Icy menthol, creamy, earthy, sweet", effects: "Cool euphoria, balanced, relaxed", terpenes: "Caryophyllene, Limonene, Myrcene", description: "Named for the blanket of trichomes that makes every nug look frozen. Ice Cap's icy gelato genetics meet White Truffle's rare, creamy funk. Premium quality at scale.", category: "1oz Premium Flower" },
-  "HDG": { type: "Indica", thc: "25-29%", genetics: "Heavy Duty Genetics cross", lineage: "Heavy-hitting indica genetics — bred for maximum potency, density, and resin production", flavor: "Gas, earthy, sweet, pungent", effects: "Potent, sedating, full-body relaxation", terpenes: "Myrcene, Caryophyllene, Humulene", description: "HDG — Heavy Duty hits different. Bred for people who need the strongest indica in the room. Dense, frosty nugs that deliver uncompromising relaxation in a full ounce.", category: "1oz Premium Flower" },
-  "Wedding Crasher": { type: "Hybrid", thc: "25-29%", genetics: "Wedding Cake × Purple Punch", lineage: "Cherry Pie × GSC → Wedding Cake | Larry OG × Granddaddy Purple → Purple Punch", flavor: "Sweet vanilla, grape candy, creamy cake", effects: "Social, euphoric, relaxed, creative", terpenes: "Limonene, Caryophyllene, Myrcene", description: "Crashing the party with style. Wedding Cake's sweet vanilla meets Purple Punch's grape candy for an irresistible combination. The life of every smoke session.", category: "1oz Premium Flower" },
+  "Creme De Menthe": { type: "Hybrid", thc: "24-28%", genetics: "Kush Mints × Gelato", lineage: "Animal Mints × Bubba Kush → Kush Mints | Sunset Sherbet × Thin Mint GSC → Gelato", flavor: "Cool mint, cream, sweet chocolate", effects: "Relaxed, uplifting, minty fresh", terpenes: "Limonene, Caryophyllene, Myrcene", description: "An after-dinner mint in flower form. Kush Mints brings the cool minty frost while Gelato adds creamy sweetness. Premium full ounce for the true connoisseur.", category: "1oz Premium Flower" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/FLW-Creme-De-Menthe.webp" },
+  "Frost": { type: "Hybrid", thc: "26-30%", genetics: "Ice Cap × White Truffle", lineage: "Frozen Gelato × Ice Cream Cake → Ice Cap | Gorilla Butter phenotype → White Truffle", flavor: "Icy menthol, creamy, earthy, sweet", effects: "Cool euphoria, balanced, relaxed", terpenes: "Caryophyllene, Limonene, Myrcene", description: "Named for the blanket of trichomes that makes every nug look frozen. Ice Cap's icy gelato genetics meet White Truffle's rare, creamy funk. Premium quality at scale.", category: "1oz Premium Flower" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/FLW-Frost.webp" },
+  "HDG": { type: "Indica", thc: "25-29%", genetics: "Heavy Duty Genetics cross", lineage: "Heavy-hitting indica genetics — bred for maximum potency, density, and resin production", flavor: "Gas, earthy, sweet, pungent", effects: "Potent, sedating, full-body relaxation", terpenes: "Myrcene, Caryophyllene, Humulene", description: "HDG — Heavy Duty hits different. Bred for people who need the strongest indica in the room. Dense, frosty nugs that deliver uncompromising relaxation in a full ounce.", category: "1oz Premium Flower" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/FLW-HDG.webp" },
+  "Wedding Crasher": { type: "Hybrid", thc: "25-29%", genetics: "Wedding Cake × Purple Punch", lineage: "Cherry Pie × GSC → Wedding Cake | Larry OG × Granddaddy Purple → Purple Punch", flavor: "Sweet vanilla, grape candy, creamy cake", effects: "Social, euphoric, relaxed, creative", terpenes: "Limonene, Caryophyllene, Myrcene", description: "Crashing the party with style. Wedding Cake's sweet vanilla meets Purple Punch's grape candy for an irresistible combination. The life of every smoke session.", category: "1oz Premium Flower" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/FLW-Wedding-Crasher.webp" },
   // Vapes (All-In-One + Carts) - flavor/effect focused
-  "Blue Razz": { type: "Sativa", thc: "85-90%", genetics: "Blue Raspberry terpene profile (Blue Dream lineage)", lineage: "Blueberry × Haze inspired terpene blend — blue raspberry candy flavor engineered from natural cannabis terpenes", flavor: "Blue raspberry candy, sweet berry, tart", effects: "Energetic, uplifting, happy", terpenes: "Myrcene, Pinene, Limonene", description: "The blue raspberry experience perfected for vape. Inspired by Blue Dream genetics, this captures the iconic candy shop flavor with a bright, energizing sativa buzz.", category: "Vape" },
-  "Double Bubble OG": { type: "Indica", thc: "85-90%", genetics: "Bubble Gum × OG Kush", lineage: "Indiana Bubble Gum × OG Kush — old-school bubblegum genetics meet modern OG potency", flavor: "Classic bubblegum, sweet, earthy OG", effects: "Relaxed, nostalgic, happy", terpenes: "Myrcene, Caryophyllene, Limonene", description: "That classic bubblegum flavor from the bag you used to get at the corner store — now in a vape. Indiana Bubble Gum genetics meet OG Kush's legendary relaxation.", category: "Vape" },
-  "Electric Watermelon OG": { type: "Hybrid", thc: "85-90%", genetics: "Watermelon × OG Kush", lineage: "Watermelon phenotype × OG Kush — electrified watermelon flavor with classic OG backbone", flavor: "Sweet watermelon, electric citrus, earthy OG", effects: "Balanced, uplifting, relaxed", terpenes: "Limonene, Myrcene, Caryophyllene", description: "Watermelon that hits you with a jolt. The watermelon phenotype's juicy sweetness gets an OG Kush backbone for balance. Like biting into a watermelon that bites back.", category: "Vape" },
-  "Forbidden Fruit": { type: "Indica", thc: "85-90%", genetics: "Cherry Pie × Tangie", lineage: "Granddaddy Purple × Durban Poison → Cherry Pie | California Orange × Skunk → Tangie", flavor: "Tropical passionfruit, cherry, mango", effects: "Deeply relaxing, exotic, dreamy", terpenes: "Myrcene, Limonene, Pinene", description: "The most exotic fruit salad you'll ever taste. Cherry Pie's berry sweetness meets Tangie's tropical citrus for a flavor so good it feels like it shouldn't be allowed.", category: "Vape" },
-  "Lemon Drop": { type: "Sativa", thc: "85-90%", genetics: "Lemon OG × Sour Diesel", lineage: "Lemon Skunk × OG Kush → Lemon OG | Chemdawg × MSSS × NL → Sour Diesel", flavor: "Sharp lemon candy, sour, sweet citrus", effects: "Energizing, focused, mood-boosting", terpenes: "Limonene, Pinene, Caryophyllene", description: "Pure lemon candy energy in a vape. Lemon OG brings the citrus bomb while Sour Diesel adds sativa fuel. Like squeezing a lemon straight into your brain — in a good way.", category: "Vape" },
-  "Rainbow Beltz": { type: "Hybrid", thc: "85-90%", genetics: "Zkittlez × Moonbow", lineage: "Grape Ape × Grapefruit → Zkittlez | Zkittlez × Do-Si-Dos → Moonbow", flavor: "Sour rainbow candy, fruity, sweet-tart", effects: "Euphoric, creative, balanced", terpenes: "Caryophyllene, Limonene, Myrcene", description: "Tastes exactly like the sour candy belt. Zkittlez appears on both sides of the lineage for double the fruit, while Moonbow adds exotic complexity. A candy lover's dream.", category: "Vape" },
-  "Red Razzleberry": { type: "Sativa", thc: "85-90%", genetics: "Raspberry Kush × Berry White", lineage: "Raspberry-forward phenotype selection × White Widow × Blueberry → Berry White", flavor: "Red raspberry, mixed berry, sweet tart", effects: "Uplifting, social, creative", terpenes: "Myrcene, Limonene, Pinene", description: "Red berry explosion. The raspberry phenotype delivers intense, authentic berry flavor while Berry White adds smooth, creamy sweetness. A fruit-forward sativa you'll keep hitting.", category: "Vape" },
-  "Green Apple": { type: "Sativa", thc: "85-90%", genetics: "Green Apple Runtz (Zkittlez × Gelato)", lineage: "Green apple phenotype of Runtz — Zkittlez × Gelato with selected green apple terpene expression", flavor: "Sour green apple, candy, tart citrus", effects: "Energetic, focused, euphoric", terpenes: "Limonene, Pinene, Terpinolene", description: "Sour green apple candy in a cart. This Runtz phenotype was selected specifically for its bright, tart apple flavor. Sativa energy with candy shop appeal.", category: "Vape" },
-  "Orange Creamsicle": { type: "Hybrid", thc: "85-90%", genetics: "Orange Crush × Juicy Fruit", lineage: "California Orange × Blueberry → Orange Crush | Afghani × Thai → Juicy Fruit", flavor: "Creamy orange, vanilla ice cream, tangy", effects: "Uplifting, relaxed, nostalgic", terpenes: "Limonene, Myrcene, Linalool", description: "The ice cream truck in a cart. Orange Crush's bright citrus meets Juicy Fruit's tropical sweetness for a creamy, dreamy vape that tastes like summer childhood.", category: "Vape" },
-  "Papaya Punch": { type: "Indica", thc: "85-90%", genetics: "Papaya × Purple Punch", lineage: "Citral #13 × Ice #2 → Papaya | Larry OG × Granddaddy Purple → Purple Punch", flavor: "Tropical papaya, grape punch, sweet cream", effects: "Relaxing, tropical, sleepy", terpenes: "Myrcene, Limonene, Caryophyllene", description: "A tropical knockout. Papaya's exotic fruit sweetness gets amped up with Purple Punch's grape candy power. Close your eyes and you're on a hammock somewhere warm.", category: "Vape" },
-  "Melted Strawberries": { type: "Hybrid", thc: "24-28%", genetics: "Strawberry Guava × Gelato", lineage: "Strawberry phenotype × Guava cross → Strawberry Guava | Sunset Sherbet × Thin Mint GSC → Gelato", flavor: "Melted strawberry, cream, sweet jam", effects: "Euphoric, relaxed, happy", terpenes: "Myrcene, Limonene, Linalool", description: "Like strawberries left in the sun — warm, sweet, and dripping with flavor. The 14-pack gives you this premium hybrid experience for sharing or savoring all week.", category: "14 Pack Prerolls" },
+  "Blue Razz": { type: "Sativa", thc: "85-90%", genetics: "Blue Raspberry terpene profile (Blue Dream lineage)", lineage: "Blueberry × Haze inspired terpene blend — blue raspberry candy flavor engineered from natural cannabis terpenes", flavor: "Blue raspberry candy, sweet berry, tart", effects: "Energetic, uplifting, happy", terpenes: "Myrcene, Pinene, Limonene", description: "The blue raspberry experience perfected for vape. Inspired by Blue Dream genetics, this captures the iconic candy shop flavor with a bright, energizing sativa buzz.", category: "Vape" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/VAPE-Blue-Razz.webp" },
+  "Double Bubble OG": { type: "Indica", thc: "85-90%", genetics: "Bubble Gum × OG Kush", lineage: "Indiana Bubble Gum × OG Kush — old-school bubblegum genetics meet modern OG potency", flavor: "Classic bubblegum, sweet, earthy OG", effects: "Relaxed, nostalgic, happy", terpenes: "Myrcene, Caryophyllene, Limonene", description: "That classic bubblegum flavor from the bag you used to get at the corner store — now in a vape. Indiana Bubble Gum genetics meet OG Kush's legendary relaxation.", category: "Vape" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/VAPE-Double-Bubble-OG.webp" },
+  "Electric Watermelon OG": { type: "Hybrid", thc: "85-90%", genetics: "Watermelon × OG Kush", lineage: "Watermelon phenotype × OG Kush — electrified watermelon flavor with classic OG backbone", flavor: "Sweet watermelon, electric citrus, earthy OG", effects: "Balanced, uplifting, relaxed", terpenes: "Limonene, Myrcene, Caryophyllene", description: "Watermelon that hits you with a jolt. The watermelon phenotype's juicy sweetness gets an OG Kush backbone for balance. Like biting into a watermelon that bites back.", category: "Vape" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/VAPE-Electric-Watermelon-OG.webp" },
+  "Forbidden Fruit": { type: "Indica", thc: "85-90%", genetics: "Cherry Pie × Tangie", lineage: "Granddaddy Purple × Durban Poison → Cherry Pie | California Orange × Skunk → Tangie", flavor: "Tropical passionfruit, cherry, mango", effects: "Deeply relaxing, exotic, dreamy", terpenes: "Myrcene, Limonene, Pinene", description: "The most exotic fruit salad you'll ever taste. Cherry Pie's berry sweetness meets Tangie's tropical citrus for a flavor so good it feels like it shouldn't be allowed.", category: "Vape" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/VAPE-Forbidden-Fruit.webp" },
+  "Lemon Drop": { type: "Sativa", thc: "85-90%", genetics: "Lemon OG × Sour Diesel", lineage: "Lemon Skunk × OG Kush → Lemon OG | Chemdawg × MSSS × NL → Sour Diesel", flavor: "Sharp lemon candy, sour, sweet citrus", effects: "Energizing, focused, mood-boosting", terpenes: "Limonene, Pinene, Caryophyllene", description: "Pure lemon candy energy in a vape. Lemon OG brings the citrus bomb while Sour Diesel adds sativa fuel. Like squeezing a lemon straight into your brain — in a good way.", category: "Vape" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/VAPE-Lemon-Drop.webp" },
+  "Rainbow Beltz": { type: "Hybrid", thc: "85-90%", genetics: "Zkittlez × Moonbow", lineage: "Grape Ape × Grapefruit → Zkittlez | Zkittlez × Do-Si-Dos → Moonbow", flavor: "Sour rainbow candy, fruity, sweet-tart", effects: "Euphoric, creative, balanced", terpenes: "Caryophyllene, Limonene, Myrcene", description: "Tastes exactly like the sour candy belt. Zkittlez appears on both sides of the lineage for double the fruit, while Moonbow adds exotic complexity. A candy lover's dream.", category: "Vape" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/VAPE-Rainbow-Beltz.webp" },
+  "Red Razzleberry": { type: "Sativa", thc: "85-90%", genetics: "Raspberry Kush × Berry White", lineage: "Raspberry-forward phenotype selection × White Widow × Blueberry → Berry White", flavor: "Red raspberry, mixed berry, sweet tart", effects: "Uplifting, social, creative", terpenes: "Myrcene, Limonene, Pinene", description: "Red berry explosion. The raspberry phenotype delivers intense, authentic berry flavor while Berry White adds smooth, creamy sweetness. A fruit-forward sativa you'll keep hitting.", category: "Vape" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/VAPE-Red-Razzleberry.webp" },
+  "Green Apple": { type: "Sativa", thc: "85-90%", genetics: "Green Apple Runtz (Zkittlez × Gelato)", lineage: "Green apple phenotype of Runtz — Zkittlez × Gelato with selected green apple terpene expression", flavor: "Sour green apple, candy, tart citrus", effects: "Energetic, focused, euphoric", terpenes: "Limonene, Pinene, Terpinolene", description: "Sour green apple candy in a cart. This Runtz phenotype was selected specifically for its bright, tart apple flavor. Sativa energy with candy shop appeal.", category: "Vape" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/VAPE-Green-Apple.webp" },
+  "Orange Creamsicle": { type: "Hybrid", thc: "85-90%", genetics: "Orange Crush × Juicy Fruit", lineage: "California Orange × Blueberry → Orange Crush | Afghani × Thai → Juicy Fruit", flavor: "Creamy orange, vanilla ice cream, tangy", effects: "Uplifting, relaxed, nostalgic", terpenes: "Limonene, Myrcene, Linalool", description: "The ice cream truck in a cart. Orange Crush's bright citrus meets Juicy Fruit's tropical sweetness for a creamy, dreamy vape that tastes like summer childhood.", category: "Vape" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/VAPE-Orange-Creamsicle.webp" },
+  "Papaya Punch": { type: "Indica", thc: "85-90%", genetics: "Papaya × Purple Punch", lineage: "Citral #13 × Ice #2 → Papaya | Larry OG × Granddaddy Purple → Purple Punch", flavor: "Tropical papaya, grape punch, sweet cream", effects: "Relaxing, tropical, sleepy", terpenes: "Myrcene, Limonene, Caryophyllene", description: "A tropical knockout. Papaya's exotic fruit sweetness gets amped up with Purple Punch's grape candy power. Close your eyes and you're on a hammock somewhere warm.", category: "Vape" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/09/VAPE-Papaya-Punch.webp" },
+  "Melted Strawberries": { type: "Hybrid", thc: "24-28%", genetics: "Strawberry Guava × Gelato", lineage: "Strawberry phenotype × Guava cross → Strawberry Guava | Sunset Sherbet × Thin Mint GSC → Gelato", flavor: "Melted strawberry, cream, sweet jam", effects: "Euphoric, relaxed, happy", terpenes: "Myrcene, Limonene, Linalool", description: "Like strawberries left in the sun — warm, sweet, and dripping with flavor. The 14-pack gives you this premium hybrid experience for sharing or savoring all week.", category: "14 Pack Prerolls" , image: "https://dragonflybrandny.com/wp-content/uploads/2025/12/14P-Melted-Strawberries-1.webp" },
 };
 
 // ─── App Styles ────────────────────────────────────────────────────────────
@@ -107,6 +219,8 @@ export default function DragonflyScanner() {
   const [signupData, setSignupData] = useState({ name: "", email: "", phone: "", age: false });
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(null);
+  const [scanStatus, setScanStatus] = useState("");
+  const canvasRef = useRef(null);
   const [cameraActive, setCameraActive] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState(0);
@@ -128,19 +242,43 @@ export default function DragonflyScanner() {
     : [];
 
   // Camera functions
+  const [cameraError, setCameraError] = useState(null);
+  
   const startCamera = useCallback(async () => {
+    setCameraError(null);
     try {
+      // Check if getUserMedia is available (won't work in iframes/Claude preview)
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setCameraError("Camera not available in this environment. Use photo upload instead.");
+        setCameraActive(false);
+        return;
+      }
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } }
       });
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        videoRef.current.play();
+        await videoRef.current.play();
+        // Check if video is actually producing frames after a short delay
+        setTimeout(() => {
+          if (videoRef.current && (videoRef.current.videoWidth === 0 || videoRef.current.videoHeight === 0)) {
+            setCameraError("Camera connected but no video feed. Try uploading a photo instead.");
+          }
+        }, 2000);
       }
       setCameraActive(true);
     } catch (err) {
-      // Fallback: offer manual selection
+      console.error("Camera error:", err.name, err.message);
+      if (err.name === "NotAllowedError") {
+        setCameraError("Camera permission denied. Tap 'Upload a photo' below instead.");
+      } else if (err.name === "NotFoundError") {
+        setCameraError("No camera found on this device. Use photo upload instead.");
+      } else if (err.name === "NotReadableError") {
+        setCameraError("Camera is in use by another app. Try closing other apps or upload a photo.");
+      } else {
+        setCameraError("Couldn't access camera. Use photo upload below.");
+      }
       setCameraActive(false);
     }
   }, []);
@@ -153,44 +291,148 @@ export default function DragonflyScanner() {
     setCameraActive(false);
   }, []);
 
-  const simulateScan = useCallback(() => {
+  // ─── Resize image to reduce API payload ─────────────────────────────────
+  const resizeImage = (dataUrl, maxDim = 800) => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        let w = img.width, h = img.height;
+        if (w > maxDim || h > maxDim) {
+          const scale = maxDim / Math.max(w, h);
+          w = Math.round(w * scale);
+          h = Math.round(h * scale);
+        }
+        const c = document.createElement("canvas");
+        c.width = w; c.height = h;
+        c.getContext("2d").drawImage(img, 0, 0, w, h);
+        resolve(c.toDataURL("image/jpeg", 0.85));
+      };
+      img.src = dataUrl;
+    });
+  };
+
+  // ─── Claude Vision API: Identify strain from product photo ────────────
+  const identifyWithVision = useCallback(async (imageSource) => {
     setScanning(true);
-    setScanProgress(0);
-    const interval = setInterval(() => {
-      setScanProgress(prev => {
-        if (prev >= 100) {
-          clearInterval(interval);
+    setScanProgress(10);
+    setScanStatus("Capturing image...");
+    
+    try {
+      let imageSrc = imageSource;
+      
+      // If from video feed, capture a frame
+      if (imageSource === "camera" && videoRef.current) {
+        const canvas = document.createElement("canvas");
+        const video = videoRef.current;
+        canvas.width = video.videoWidth || 640;
+        canvas.height = video.videoHeight || 480;
+        canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+        imageSrc = canvas.toDataURL("image/jpeg", 0.85);
+      }
+      
+      setScanProgress(20);
+      setScanStatus("Preparing for analysis...");
+      
+      // Resize to keep API payload small
+      const resized = await resizeImage(imageSrc);
+      const base64 = resized.split(",")[1];
+      const mediaType = resized.startsWith("data:image/png") ? "image/png" : "image/jpeg";
+      
+      setScanProgress(30);
+      setScanStatus("AI analyzing product...");
+      
+      const strainList = strainNames.join(", ");
+      
+      const response = await fetch("/api/scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          image_base64: base64,
+          media_type: mediaType,
+          strain_list: strainList,
+        })
+      });
+      
+      setScanProgress(70);
+      setScanStatus("Processing result...");
+      
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.error || `Server error: ${response.status}`);
+      }
+      
+      const result = await response.json();
+      const aiResponse = result.strain || "UNKNOWN";
+      
+      console.log("Claude Vision response:", aiResponse);
+      
+      setScanProgress(90);
+      
+      // Match the AI response against our strain database
+      let matched = null;
+      
+      // Exact match
+      if (STRAIN_DB[aiResponse]) {
+        matched = aiResponse;
+      } else if (aiResponse !== "UNKNOWN") {
+        // Fuzzy match the AI's response against strain names
+        const aiLower = aiResponse.toLowerCase();
+        for (const name of strainNames) {
+          if (name.toLowerCase() === aiLower) { matched = name; break; }
+          if (aiLower.includes(name.toLowerCase()) || name.toLowerCase().includes(aiLower)) { matched = name; break; }
+        }
+        // If still no match, try edit distance
+        if (!matched) {
+          matched = fuzzyMatch(aiResponse, strainNames);
+        }
+      }
+      
+      setScanProgress(100);
+      
+      if (matched) {
+        setScanStatus(`Identified: ${matched}`);
+        setTimeout(() => {
           setScanning(false);
-          // Pick a random strain to simulate detection
-          const randomStrain = strainNames[Math.floor(Math.random() * strainNames.length)];
-          setScannedStrain(randomStrain);
+          setScanStatus("");
+          setScannedStrain(matched);
           stopCamera();
           setScreen("result");
-          return 100;
-        }
-        return prev + Math.random() * 15 + 5;
-      });
-    }, 200);
+        }, 800);
+      } else {
+        setScanStatus("Couldn't identify strain. Try a clearer photo or search manually.");
+        setTimeout(() => {
+          setScanning(false);
+          setScanProgress(0);
+          setScanStatus("");
+        }, 3000);
+      }
+    } catch (err) {
+      console.error("Vision API error:", err);
+      let errorMsg = "Scan failed. Try again or search manually.";
+      if (err.message?.includes("Failed to fetch") || err.message?.includes("NetworkError")) {
+        errorMsg = "Can't reach scan server. Deploy to Railway first, then scan will work.";
+      } else if (err.message?.includes("ANTHROPIC_API_KEY")) {
+        errorMsg = "API key not configured. Add ANTHROPIC_API_KEY in Railway variables.";
+      } else if (err.message?.includes("502") || err.message?.includes("Vision API")) {
+        errorMsg = "Vision API error. Check your API key in Railway.";
+      }
+      setScanStatus(errorMsg);
+      setTimeout(() => {
+        setScanning(false);
+        setScanProgress(0);
+        setScanStatus("");
+      }, 4000);
+    }
   }, [strainNames, stopCamera]);
 
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (file) {
-      setScanning(true);
-      setScanProgress(0);
-      const interval = setInterval(() => {
-        setScanProgress(prev => {
-          if (prev >= 100) {
-            clearInterval(interval);
-            setScanning(false);
-            const randomStrain = strainNames[Math.floor(Math.random() * strainNames.length)];
-            setScannedStrain(randomStrain);
-            setScreen("result");
-            return 100;
-          }
-          return prev + Math.random() * 18 + 8;
-        });
-      }, 180);
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        identifyWithVision(ev.target.result);
+      };
+      reader.readAsDataURL(file);
     }
   };
 
@@ -841,7 +1083,7 @@ export default function DragonflyScanner() {
             return (
               <div
                 key={name}
-                style={styles.searchItem}
+                style={{ ...styles.searchItem, display: "flex", alignItems: "center", gap: 12 }}
                 onClick={() => {
                   setScannedStrain(name);
                   setShowSearch(false);
@@ -849,7 +1091,12 @@ export default function DragonflyScanner() {
                   setScreen("result");
                 }}
               >
-                <div>
+                {s.image && (
+                  <div style={{ width: 44, height: 44, borderRadius: 8, overflow: "hidden", flexShrink: 0, background: COLORS.bgCard }}>
+                    <img src={s.image} alt={name} style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={(e) => { e.target.style.display = "none"; }} />
+                  </div>
+                )}
+                <div style={{ flex: 1 }}>
                   <div style={styles.searchItemName}>{name}</div>
                   <div style={styles.searchItemMeta}>{s.category} · {s.type}</div>
                 </div>
@@ -999,17 +1246,25 @@ export default function DragonflyScanner() {
       </button>
 
       <div style={styles.videoWrapper}>
-        <video ref={videoRef} style={styles.video} muted playsInline />
-        {!scanning && (
+        {!cameraError && <video ref={videoRef} style={styles.video} muted playsInline />}
+        {cameraError && !scanning && (
+          <div style={{ ...styles.scanOverlay, background: COLORS.bgCard, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, padding: 24 }}>
+            <div style={{ fontSize: 48 }}>📷</div>
+            <div style={{ fontFamily: FONTS.display, fontSize: 15, fontWeight: 500, color: COLORS.textMuted, textAlign: "center", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+              Use the photo button below
+            </div>
+          </div>
+        )}
+        {!cameraError && !scanning && (
           <div style={styles.scanOverlay}>
             <div style={styles.scanFrame} />
           </div>
         )}
         {scanning && (
           <div style={{ ...styles.scanOverlay, background: "rgba(0,0,0,0.6)" }}>
-            <div style={{ textAlign: "center" }}>
+            <div style={{ textAlign: "center", padding: "0 20px" }}>
               <div style={{ fontFamily: FONTS.display, fontSize: 16, fontWeight: 600, color: COLORS.accent, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 8 }}>
-                Analyzing Product...
+                {scanStatus || "Analyzing Product..."}
               </div>
               <div style={{ fontFamily: FONTS.mono, fontSize: 12, color: COLORS.textMuted }}>
                 {Math.min(Math.round(scanProgress), 100)}%
@@ -1029,7 +1284,7 @@ export default function DragonflyScanner() {
         <>
           <button
             style={{ ...styles.scanBtn, width: "100%", maxWidth: 400, justifyContent: "center" }}
-            onClick={simulateScan}
+            onClick={() => identifyWithVision("camera")}
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <circle cx="12" cy="12" r="3" />
@@ -1044,13 +1299,20 @@ export default function DragonflyScanner() {
             <div style={styles.dividerLine} />
           </div>
 
-          <button style={styles.uploadBtn} onClick={() => fileInputRef.current?.click()}>
-            📷 Upload a photo of your product
+          {cameraError && (
+            <div style={{ width: "100%", maxWidth: 400, padding: "12px 16px", background: "rgba(200,255,0,0.08)", border: `1px solid ${COLORS.accent}40`, borderRadius: 10, marginBottom: 12, textAlign: "center" }}>
+              <div style={{ fontSize: 14, color: COLORS.accent, marginBottom: 8, fontWeight: 500 }}>{cameraError}</div>
+            </div>
+          )}
+
+          <button style={{ ...styles.uploadBtn, background: cameraError ? COLORS.accent : COLORS.bgCard, color: cameraError ? "#000" : COLORS.textMuted, fontWeight: cameraError ? 600 : 400, borderStyle: cameraError ? "solid" : "dashed", borderColor: cameraError ? COLORS.accent : COLORS.borderLight }} onClick={() => fileInputRef.current?.click()}>
+            📷 {cameraError ? "Take Photo or Upload" : "Upload a photo of your product"}
           </button>
           <input
             ref={fileInputRef}
             type="file"
             accept="image/*"
+            capture="environment"
             style={{ display: "none" }}
             onChange={handleFileUpload}
           />
@@ -1082,6 +1344,11 @@ export default function DragonflyScanner() {
         </button>
 
         <div style={styles.strainHeader}>
+          {s.image && (
+            <div style={{ width: 120, height: 120, margin: "0 auto 12px", borderRadius: 12, overflow: "hidden", background: COLORS.bgCard, border: `1px solid ${COLORS.borderLight}` }}>
+              <img src={s.image} alt={scannedStrain} style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={(e) => { e.target.style.display = "none"; }} />
+            </div>
+          )}
           <div style={styles.typeBadge(tc)}>{s.type}</div>
           <h1 style={styles.strainName}>{scannedStrain}</h1>
           <div style={styles.strainCategory}>{s.category} · THC {s.thc}</div>
