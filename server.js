@@ -48,7 +48,22 @@ app.post("/api/scan", async (req, res) => {
             },
             {
               type: "text",
-              text: `You are a cannabis product identifier for the Dragonfly brand. Look at this product photo and identify which strain it is.\n\nThe complete list of Dragonfly strains is: ${strain_list}\n\nRules:\n- If you can identify the strain from the label text, packaging design, or any visible text, respond with ONLY the exact strain name from the list above.\n- If you can see text but it doesn't exactly match, respond with the closest match from the list.\n- If you cannot identify any strain, respond with exactly: UNKNOWN\n- Do not add any explanation, just the strain name or UNKNOWN.`
+              text: `You are a cannabis product identifier for the Dragonfly brand.
+
+PACKAGING DETAILS: Dragonfly products have a distinctive red tube/container with GOLD text for the brand name "DRAGONFLY" and product type (e.g. "PREROLL"), and BLACK text for the strain name, THC percentage, and other details. There is typically a gold dragonfly logo/emblem at the top. The strain name is usually the most prominent BLACK text on the red background, located below the word "PREROLL" or product type.
+
+Product types include: prerolls (1g joints), flower jars, vape cartridges, all-in-one vapes, 14-packs, premium ounces, and gummies.
+
+The complete list of Dragonfly strain names is: ${strain_list}
+
+TASK: Look at this product photo and identify the strain name. Read the BLACK text on the red packaging carefully — that's where the strain name is.
+
+Rules:
+- The strain name appears in BLACK TEXT below the product type on the RED packaging
+- If you can identify the strain, respond with ONLY the exact strain name from the list above
+- If you see a strain name that's close but not an exact match in the list, still respond with what you read — we'll match it
+- If you truly cannot identify any strain from the image, respond with exactly: UNKNOWN
+- Respond with ONLY the strain name — no explanation, no extra words`
             }
           ]
         }]
