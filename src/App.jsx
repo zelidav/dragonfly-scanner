@@ -217,6 +217,7 @@ mono: “‘JetBrains Mono’, monospace”,
 export default function DragonflyScanner() {
 const [screen, setScreen] = useState(“home”); // home | scan | result | signup | thanks
 const [scannedStrain, setScannedStrain] = useState(null);
+const [scannedProduct, setScannedProduct] = useState(null);
 const [searchQuery, setSearchQuery] = useState(””);
 const [showSearch, setShowSearch] = useState(false);
 const [signupData, setSignupData] = useState({ name: “”, email: “”, phone: “”, age: false });
@@ -367,9 +368,10 @@ try {
   
   const result = await response.json();
   const aiResponse = (result.strain || "UNKNOWN").trim();
+  const scannedProductType = result.product_type || null;
   
   console.log("Claude Vision raw response:", JSON.stringify(result));
-  console.log("Strain identified:", aiResponse);
+  console.log("Strain identified:", aiResponse, "Product:", scannedProductType);
   
   setScanProgress(90);
   setScanStatus(`Matching: "${aiResponse}"...`);
@@ -407,14 +409,29 @@ try {
   setScanProgress(100);
   
   if (matched) {
-    setScanStatus(`Identified: ${matched}`);
-    setTimeout(() => {
-      setScanning(false);
-      setScanStatus("");
-      setScannedStrain(matched);
-      stopCamera();
-      setScreen("result");
-    }, 800);
+    const hasProductType = scannedProductType && scannedProductType !== "UNKNOWN" && scannedProductType !== "null";
+    
+    if (hasProductType) {
+      setScanStatus(`Identified: ${matched}`);
+      setTimeout(() => {
+        setScanning(false);
+        setScanStatus("");
+        setScannedStrain(matched);
+        setScannedProduct(scannedProductType);
+        stopCamera();
+        setScreen("result");
+      }, 800);
+    } else {
+      setScanStatus(`Found: ${matched}!`);
+      setTimeout(() => {
+        setScanning(false);
+        setScanStatus("");
+        setScannedStrain(matched);
+        setScannedProduct(null);
+        stopCamera();
+        setScreen("pickProduct");
+      }, 800);
+    }
   } else {
     setScanStatus(aiResponse === "UNKNOWN" 
       ? "Couldn't read the label. Try a clearer, well-lit photo."
@@ -462,6 +479,7 @@ const goHome = () => {
 stopCamera();
 setScreen(“home”);
 setScannedStrain(null);
+setScannedProduct(null);
 setSearchQuery(””);
 setShowSearch(false);
 setScanning(false);
@@ -1365,6 +1383,77 @@ Back
 
 );
 
+// ─── Render: Pick Product Type ─────────────────────────────────────────
+const productTypes = [
+“Preroll 1g”,
+“Infused Preroll 1.25g”,
+“Flower 3.5g”,
+“Vape Cart 1g”,
+“AIO Vape 1g”,
+“Premium Disposable Vaporizer”,
+“14 Pack Prerolls”,
+“1oz Premium Flower”,
+“Gummies”,
+];
+
+const renderPickProduct = () => {
+if (!scannedStrain) return null;
+const s = STRAIN_DB[scannedStrain];
+if (!s) return null;
+
+```
+return (
+  <div style={{ ...styles.resultContainer, paddingTop: 24 }}>
+    <div style={{ textAlign: "center", marginBottom: 24 }}>
+      {s.image && (
+        <div style={{ width: 100, height: 100, margin: "0 auto 12px", borderRadius: 12, overflow: "hidden", background: COLORS.bgCard, border: `1px solid ${COLORS.borderLight}` }}>
+          <img src={s.image} alt={scannedStrain} style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={(e) => { e.target.style.display = "none"; }} />
+        </div>
+      )}
+      <div style={{ fontFamily: FONTS.display, fontSize: 14, fontWeight: 500, color: COLORS.accent, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 4 }}>Strain Identified</div>
+      <h2 style={{ fontFamily: FONTS.display, fontSize: 28, fontWeight: 700, color: COLORS.textPrimary, margin: "0 0 8px" }}>{scannedStrain}</h2>
+      <div style={{ fontFamily: FONTS.body, fontSize: 15, color: COLORS.textMuted }}>What product type is this?</div>
+    </div>
+    
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, width: "100%", maxWidth: 400 }}>
+      {productTypes.map(pt => (
+        <button
+          key={pt}
+          style={{
+            width: "100%",
+            padding: "14px 16px",
+            background: COLORS.bgCard,
+            border: `1px solid ${COLORS.borderLight}`,
+            borderRadius: 10,
+            color: COLORS.textPrimary,
+            fontFamily: FONTS.body,
+            fontSize: 15,
+            fontWeight: 500,
+            cursor: "pointer",
+            textAlign: "left",
+            transition: "all 0.15s ease",
+          }}
+          onClick={() => {
+            setScannedProduct(pt);
+            setScreen("result");
+          }}
+          onMouseOver={(e) => { e.target.style.borderColor = COLORS.accent; e.target.style.background = `${COLORS.accent}10`; }}
+          onMouseOut={(e) => { e.target.style.borderColor = COLORS.borderLight; e.target.style.background = COLORS.bgCard; }}
+        >
+          {pt}
+        </button>
+      ))}
+    </div>
+
+    <button style={{ ...styles.browseBtn, marginTop: 16 }} onClick={goHome}>
+      Cancel
+    </button>
+  </div>
+);
+```
+
+};
+
 // ─── Render: Result ──────────────────────────────────────────────────────
 const renderResult = () => {
 if (!scannedStrain || !STRAIN_DB[scannedStrain]) return null;
@@ -1389,7 +1478,7 @@ return (
       )}
       <div style={styles.typeBadge(tc)}>{s.type}</div>
       <h1 style={styles.strainName}>{scannedStrain}</h1>
-      <div style={styles.strainCategory}>{s.category} · THC {s.thc}</div>
+      <div style={styles.strainCategory}>{scannedProduct || s.category} · THC {s.thc}</div>
     </div>
 
     {/* Quick Stats */}
@@ -1606,6 +1695,7 @@ return (
   {/* Screens */}
   {screen === "home" && renderHome()}
   {screen === "scan" && renderScan()}
+  {screen === "pickProduct" && renderPickProduct()}
   {screen === "result" && renderResult()}
   {screen === "signup" && renderSignup()}
   {screen === "thanks" && renderThanks()}
