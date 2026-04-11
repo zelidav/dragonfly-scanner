@@ -540,11 +540,11 @@ export default function DragonflyScanner() {
       console.error("Vision API error:", err);
       let errorMsg = "Scan failed. Try again or search manually.";
       if (err.message?.includes("Failed to fetch") || err.message?.includes("NetworkError")) {
-        errorMsg = "Can't reach scan server. Deploy to Railway first, then scan will work.";
+        errorMsg = "Can't reach scan server. Check your connection and try again.";
       } else if (err.message?.includes("ANTHROPIC_API_KEY")) {
-        errorMsg = "API key not configured. Add ANTHROPIC_API_KEY in Railway variables.";
+        errorMsg = "API key not configured. Contact admin to set ANTHROPIC_API_KEY.";
       } else if (err.message?.includes("502") || err.message?.includes("Vision API")) {
-        errorMsg = "Vision API error. Check your API key in Railway.";
+        errorMsg = "Vision API error. Try again or search manually.";
       }
       setScanStatus(errorMsg);
       setTimeout(() => {

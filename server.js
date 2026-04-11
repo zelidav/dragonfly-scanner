@@ -95,7 +95,7 @@ function requireAdmin(req, res, next) {
 // --- Claude Vision API Proxy ----------------------------------------------
 // Keeps the Anthropic API key server-side. Frontend POSTs image to /api/scan,
 // server forwards to Claude, returns the strain name.
-// Set ANTHROPIC_API_KEY as a Railway environment variable.
+// Set ANTHROPIC_API_KEY as a Cloud Run environment variable.
 
 app.post("/api/scan", async (req, res) => {
   const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -174,7 +174,7 @@ Rules:
 });
 
 // --- Email Configuration ---------------------------------------------------
-// Set these as Railway environment variables:
+// Set these as Cloud Run environment variables:
 //   RESEND_API_KEY=re_xxxxxxxx (from resend.com)
 //   NOTIFY_EMAIL=sasha@dopestr.com
 //   FROM_EMAIL=dragonfly@cannacrypted.com
@@ -311,7 +311,7 @@ Signup #${signups.length}
 // --- View all signups (internal/admin) -------------------------------------
 app.get("/api/signups", (req, res) => {
   const key = req.query.key;
-  // Simple auth -- set ADMIN_KEY env var on Railway
+  // Simple auth -- set ADMIN_KEY env var on Cloud Run
   if (process.env.ADMIN_KEY && key !== process.env.ADMIN_KEY) {
     return res.status(401).json({ error: "Unauthorized" });
   }
