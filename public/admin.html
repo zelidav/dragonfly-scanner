@@ -1,0 +1,752 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DRAGONFLY Admin</title>
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@300;400;500;600;700&family=DM+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --bg: #0a0a0a; --bg-card: #141414; --bg-elevated: #1a1a1a;
+    --text: #ffffff; --text-muted: #888888; --text-dim: #555555;
+    --accent: #c8ff00; --accent-dim: rgba(200,255,0,0.15);
+    --border: rgba(255,255,255,0.08); --border-light: rgba(255,255,255,0.12);
+    --indica: #8b5cf6; --sativa: #f59e0b; --hybrid: #10b981;
+    --success: #22c55e; --error: #ef4444;
+  }
+  body { background: var(--bg); color: var(--text); font-family: 'DM Sans', sans-serif; min-height: 100vh; }
+  input, select, textarea, button { font-family: inherit; }
+
+  /* Login */
+  .login-wrap { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
+  .login-box { background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px; padding: 48px 36px; max-width: 400px; width: 100%; text-align: center; }
+  .login-box h1 { font-family: 'Oswald', sans-serif; color: var(--accent); font-size: 32px; letter-spacing: 4px; margin-bottom: 8px; }
+  .login-box p { color: var(--text-muted); font-size: 14px; margin-bottom: 28px; }
+  .login-box input { width: 100%; padding: 14px 16px; background: var(--bg); border: 1px solid var(--border-light); border-radius: 10px; color: var(--text); font-size: 15px; margin-bottom: 16px; outline: none; }
+  .login-box input:focus { border-color: var(--accent); }
+  .login-box .btn { width: 100%; }
+  .login-error { color: var(--error); font-size: 13px; margin-top: 8px; }
+
+  /* Layout */
+  .app { display: none; }
+  .app.active { display: flex; flex-direction: column; min-height: 100vh; }
+  .header { display: flex; align-items: center; justify-content: space-between; padding: 16px 24px; border-bottom: 1px solid var(--border); background: var(--bg-card); position: sticky; top: 0; z-index: 100; }
+  .header h1 { font-family: 'Oswald', sans-serif; color: var(--accent); font-size: 22px; letter-spacing: 3px; }
+  .header-right { display: flex; align-items: center; gap: 12px; }
+  .header .logout-btn { background: none; border: 1px solid var(--border-light); color: var(--text-muted); padding: 6px 14px; border-radius: 8px; cursor: pointer; font-size: 13px; }
+  .header .logout-btn:hover { border-color: var(--error); color: var(--error); }
+
+  /* Tabs */
+  .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); background: var(--bg-card); padding: 0 24px; overflow-x: auto; }
+  .tab { padding: 14px 20px; font-size: 14px; font-weight: 500; color: var(--text-muted); cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap; transition: all 0.2s; }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  /* Content */
+  .content { flex: 1; padding: 24px; max-width: 1400px; margin: 0 auto; width: 100%; }
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  /* Cards */
+  .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+  .stat-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+  .stat-card .label { color: var(--text-muted); font-size: 12px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+  .stat-card .value { font-family: 'Oswald', sans-serif; font-size: 36px; color: var(--accent); }
+  .stat-card .sub { color: var(--text-dim); font-size: 12px; margin-top: 4px; }
+
+  /* Buttons */
+  .btn { background: var(--accent); color: #000; border: none; padding: 10px 20px; border-radius: 10px; font-weight: 600; font-size: 14px; cursor: pointer; transition: all 0.2s; }
+  .btn:hover { opacity: 0.85; transform: translateY(-1px); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+  .btn-outline { background: transparent; border: 1px solid var(--accent); color: var(--accent); }
+  .btn-outline:hover { background: var(--accent-dim); }
+  .btn-danger { background: var(--error); color: white; }
+  .btn-sm { padding: 6px 12px; font-size: 12px; border-radius: 6px; }
+
+  /* Tables */
+  .table-wrap { overflow-x: auto; border-radius: 12px; border: 1px solid var(--border); }
+  table { width: 100%; border-collapse: collapse; }
+  th { background: var(--bg-elevated); color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; padding: 12px 14px; text-align: left; font-weight: 500; white-space: nowrap; }
+  td { padding: 10px 14px; border-top: 1px solid var(--border); font-size: 14px; vertical-align: middle; }
+  tr:hover td { background: rgba(255,255,255,0.02); }
+
+  /* Type badges */
+  .badge { padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+  .badge-indica { background: rgba(139,92,246,0.15); color: var(--indica); }
+  .badge-sativa { background: rgba(245,158,11,0.15); color: var(--sativa); }
+  .badge-hybrid { background: rgba(16,185,129,0.15); color: var(--hybrid); }
+
+  /* Activity */
+  .activity-feed { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; max-height: 400px; overflow-y: auto; }
+  .activity-item { display: flex; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .activity-item:last-child { border-bottom: none; }
+  .activity-time { color: var(--text-dim); font-family: 'JetBrains Mono', monospace; font-size: 11px; white-space: nowrap; min-width: 80px; }
+  .activity-icon { width: 24px; height: 24px; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 12px; flex-shrink: 0; }
+  .activity-icon.scan { background: rgba(200,255,0,0.15); }
+  .activity-icon.signup { background: rgba(34,197,94,0.15); }
+  .activity-icon.product { background: rgba(139,92,246,0.15); }
+  .activity-icon.scrape { background: rgba(245,158,11,0.15); }
+  .activity-detail { color: var(--text-muted); }
+
+  /* Search/Filter bar */
+  .toolbar { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; }
+  .toolbar input, .toolbar select { background: var(--bg-card); border: 1px solid var(--border-light); color: var(--text); padding: 10px 14px; border-radius: 8px; font-size: 14px; outline: none; }
+  .toolbar input:focus, .toolbar select:focus { border-color: var(--accent); }
+  .toolbar input { flex: 1; min-width: 200px; }
+  .toolbar select { min-width: 140px; }
+
+  /* Product image thumbnail */
+  .thumb { width: 40px; height: 40px; border-radius: 6px; object-fit: cover; background: var(--bg); }
+
+  /* Modal */
+  .modal-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 200; align-items: center; justify-content: center; padding: 20px; }
+  .modal-overlay.open { display: flex; }
+  .modal { background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px; padding: 28px; max-width: 600px; width: 100%; max-height: 85vh; overflow-y: auto; }
+  .modal h2 { font-family: 'Oswald', sans-serif; font-size: 22px; margin-bottom: 20px; color: var(--accent); }
+  .form-group { margin-bottom: 14px; }
+  .form-group label { display: block; font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+  .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 10px 14px; background: var(--bg); border: 1px solid var(--border-light); border-radius: 8px; color: var(--text); font-size: 14px; outline: none; }
+  .form-group input:focus, .form-group select:focus, .form-group textarea:focus { border-color: var(--accent); }
+  .form-group textarea { min-height: 80px; resize: vertical; }
+  .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .form-actions { display: flex; gap: 12px; margin-top: 20px; justify-content: flex-end; }
+
+  /* Scraper */
+  .scrape-results { margin-top: 20px; }
+  .scrape-item { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; }
+  .scrape-item .name { font-weight: 500; }
+  .scrape-item .new-badge { background: var(--accent-dim); color: var(--accent); padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+  .scrape-item .existing-badge { background: rgba(255,255,255,0.05); color: var(--text-dim); padding: 2px 8px; border-radius: 4px; font-size: 11px; }
+
+  /* Settings */
+  .settings-grid { display: grid; gap: 12px; }
+  .setting-row { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; }
+  .setting-name { font-weight: 500; font-size: 14px; }
+  .setting-status { font-size: 13px; font-family: 'JetBrains Mono', monospace; }
+  .setting-status.ok { color: var(--success); }
+  .setting-status.missing { color: var(--error); }
+
+  /* Bar chart */
+  .chart-section { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 24px; }
+  .chart-section h3 { font-family: 'Oswald', sans-serif; font-size: 16px; color: var(--text-muted); margin-bottom: 16px; text-transform: uppercase; letter-spacing: 1px; }
+  .bar-chart { display: flex; align-items: flex-end; gap: 8px; height: 120px; }
+  .bar-col { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: 1; }
+  .bar { background: var(--accent); border-radius: 4px 4px 0 0; width: 100%; min-height: 2px; transition: height 0.3s; }
+  .bar-label { font-size: 10px; color: var(--text-dim); white-space: nowrap; }
+  .bar-value { font-size: 11px; color: var(--accent); font-family: 'JetBrains Mono', monospace; }
+
+  /* Responsive */
+  @media (max-width: 768px) {
+    .content { padding: 16px; }
+    .stats-grid { grid-template-columns: repeat(2, 1fr); }
+    .form-row { grid-template-columns: 1fr; }
+    .header { padding: 12px 16px; }
+    .tabs { padding: 0 12px; }
+    .tab { padding: 12px 14px; font-size: 13px; }
+    .stat-card .value { font-size: 28px; }
+  }
+
+  /* Loading spinner */
+  .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid var(--text-dim); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.6s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Toast */
+  .toast { position: fixed; bottom: 24px; right: 24px; background: var(--bg-card); border: 1px solid var(--accent); border-radius: 10px; padding: 14px 20px; font-size: 14px; z-index: 300; animation: slideIn 0.3s; }
+  .toast.error { border-color: var(--error); color: var(--error); }
+  @keyframes slideIn { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+</style>
+</head>
+<body>
+
+<!-- Login Screen -->
+<div id="loginScreen" class="login-wrap">
+  <div class="login-box">
+    <h1>DRAGONFLY</h1>
+    <p>Admin Dashboard</p>
+    <input type="password" id="keyInput" placeholder="Enter admin key..." autofocus>
+    <button class="btn" onclick="doLogin()">Sign In</button>
+    <div id="loginError" class="login-error"></div>
+  </div>
+</div>
+
+<!-- App -->
+<div id="app" class="app">
+  <div class="header">
+    <h1>DRAGONFLY</h1>
+    <div class="header-right">
+      <span style="color: var(--text-dim); font-size: 12px;">ADMIN</span>
+      <button class="logout-btn" onclick="doLogout()">Logout</button>
+    </div>
+  </div>
+  <div class="tabs">
+    <div class="tab active" data-tab="dashboard" onclick="switchTab('dashboard')">Dashboard</div>
+    <div class="tab" data-tab="products" onclick="switchTab('products')">Products</div>
+    <div class="tab" data-tab="scraper" onclick="switchTab('scraper')">Scraper</div>
+    <div class="tab" data-tab="settings" onclick="switchTab('settings')">Settings</div>
+  </div>
+
+  <div class="content">
+
+    <!-- Dashboard -->
+    <div id="panel-dashboard" class="panel active">
+      <div class="stats-grid">
+        <div class="stat-card"><div class="label">Total Scans</div><div class="value" id="statScans">--</div><div class="sub">Since last deploy</div></div>
+        <div class="stat-card"><div class="label">Signups</div><div class="value" id="statSignups">--</div><div class="sub">Email collected</div></div>
+        <div class="stat-card"><div class="label">Products</div><div class="value" id="statProducts">--</div><div class="sub">In database</div></div>
+        <div class="stat-card"><div class="label">Uptime</div><div class="value" id="statUptime" style="font-size: 24px;">--</div><div class="sub">Server uptime</div></div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+        <div class="chart-section">
+          <h3>Products by Category</h3>
+          <div id="categoryChart" class="bar-chart"></div>
+        </div>
+        <div class="chart-section">
+          <h3>Products by Type</h3>
+          <div id="typeChart" class="bar-chart"></div>
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+        <div>
+          <h3 style="font-family: 'Oswald', sans-serif; color: var(--text-muted); margin-bottom: 12px; text-transform: uppercase; letter-spacing: 1px; font-size: 16px;">Recent Activity</h3>
+          <div class="activity-feed" id="activityFeed">
+            <div style="color: var(--text-dim); text-align: center; padding: 30px;">Loading...</div>
+          </div>
+        </div>
+        <div>
+          <h3 style="font-family: 'Oswald', sans-serif; color: var(--text-muted); margin-bottom: 12px; text-transform: uppercase; letter-spacing: 1px; font-size: 16px;">Recent Signups</h3>
+          <div class="activity-feed" id="signupsFeed">
+            <div style="color: var(--text-dim); text-align: center; padding: 30px;">Loading...</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Products -->
+    <div id="panel-products" class="panel">
+      <div class="toolbar">
+        <input type="text" id="productSearch" placeholder="Search products..." oninput="renderProducts()">
+        <select id="productCategory" onchange="renderProducts()">
+          <option value="">All Categories</option>
+        </select>
+        <select id="productType" onchange="renderProducts()">
+          <option value="">All Types</option>
+          <option value="Indica">Indica</option>
+          <option value="Sativa">Sativa</option>
+          <option value="Hybrid">Hybrid</option>
+        </select>
+        <button class="btn" onclick="openAddModal()">+ Add Product</button>
+      </div>
+      <div id="productCount" style="color: var(--text-dim); font-size: 13px; margin-bottom: 12px;"></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th></th>
+              <th>Name</th>
+              <th>Type</th>
+              <th>Category</th>
+              <th>THC</th>
+              <th>Flavor</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="productTable"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Scraper -->
+    <div id="panel-scraper" class="panel">
+      <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin-bottom: 20px;">
+        <h3 style="font-family: 'Oswald', sans-serif; font-size: 18px; margin-bottom: 8px;">Website Scraper</h3>
+        <p style="color: var(--text-muted); font-size: 14px; margin-bottom: 16px;">Scan dragonflybrandny.com/shop for new products, images, and prices.</p>
+        <button class="btn" id="scrapeBtn" onclick="doScrape()">Run Scrape</button>
+        <span id="scrapeStatus" style="margin-left: 12px; color: var(--text-dim); font-size: 13px;"></span>
+      </div>
+      <div id="scrapeResults" class="scrape-results"></div>
+    </div>
+
+    <!-- Settings -->
+    <div id="panel-settings" class="panel">
+      <h3 style="font-family: 'Oswald', sans-serif; font-size: 18px; margin-bottom: 16px;">Environment Variables</h3>
+      <div id="settingsGrid" class="settings-grid"></div>
+      <h3 style="font-family: 'Oswald', sans-serif; font-size: 18px; margin: 28px 0 16px;">Service Health</h3>
+      <div id="healthInfo" class="settings-grid"></div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Edit/Add Modal -->
+<div id="productModal" class="modal-overlay" onclick="if(event.target===this)closeModal()">
+  <div class="modal">
+    <h2 id="modalTitle">Edit Product</h2>
+    <div class="form-group">
+      <label>Name</label>
+      <input type="text" id="fName" placeholder="Strain name">
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Type</label>
+        <select id="fType"><option value="Hybrid">Hybrid</option><option value="Indica">Indica</option><option value="Sativa">Sativa</option></select>
+      </div>
+      <div class="form-group">
+        <label>Category</label>
+        <input type="text" id="fCategory" placeholder="e.g. Preroll 1g, Flower 3.5g">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>THC</label>
+        <input type="text" id="fThc" placeholder="e.g. 24-28%">
+      </div>
+      <div class="form-group">
+        <label>Terpenes</label>
+        <input type="text" id="fTerpenes" placeholder="e.g. Myrcene, Limonene">
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Genetics</label>
+      <input type="text" id="fGenetics" placeholder="Parent strains">
+    </div>
+    <div class="form-group">
+      <label>Lineage</label>
+      <textarea id="fLineage" placeholder="Full lineage"></textarea>
+    </div>
+    <div class="form-group">
+      <label>Flavor</label>
+      <input type="text" id="fFlavor" placeholder="Flavor profile">
+    </div>
+    <div class="form-group">
+      <label>Effects</label>
+      <input type="text" id="fEffects" placeholder="Effects">
+    </div>
+    <div class="form-group">
+      <label>Description</label>
+      <textarea id="fDescription" placeholder="Full description"></textarea>
+    </div>
+    <div class="form-group">
+      <label>Image URL</label>
+      <input type="text" id="fImage" placeholder="https://...">
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-outline" onclick="closeModal()">Cancel</button>
+      <button class="btn" id="modalSaveBtn" onclick="saveProduct()">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// --- State ---
+let adminKey = localStorage.getItem('df_admin_key') || '';
+let products = {};
+let editingProduct = null; // null = add mode, string = edit mode (name)
+let statsData = null;
+
+const API = '';
+
+// --- Auth ---
+function doLogin() {
+  const key = document.getElementById('keyInput').value.trim();
+  if (!key) return;
+  adminKey = key;
+  localStorage.setItem('df_admin_key', key);
+  document.getElementById('loginError').textContent = '';
+  testAuth();
+}
+
+function doLogout() {
+  adminKey = '';
+  localStorage.removeItem('df_admin_key');
+  document.getElementById('app').classList.remove('active');
+  document.getElementById('loginScreen').style.display = 'flex';
+  document.getElementById('keyInput').value = '';
+}
+
+async function testAuth() {
+  try {
+    const r = await fetch(`${API}/api/admin/stats?key=${encodeURIComponent(adminKey)}`);
+    if (r.ok) {
+      document.getElementById('loginScreen').style.display = 'none';
+      document.getElementById('app').classList.add('active');
+      loadDashboard();
+      loadProducts();
+    } else {
+      document.getElementById('loginError').textContent = 'Invalid admin key';
+      adminKey = '';
+      localStorage.removeItem('df_admin_key');
+    }
+  } catch (e) {
+    document.getElementById('loginError').textContent = 'Connection error';
+  }
+}
+
+// --- Tabs ---
+function switchTab(tab) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+  document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + tab));
+  if (tab === 'dashboard') loadDashboard();
+  if (tab === 'products') loadProducts();
+  if (tab === 'settings') loadSettings();
+}
+
+// --- Dashboard ---
+async function loadDashboard() {
+  try {
+    const r = await fetch(`${API}/api/admin/stats?key=${encodeURIComponent(adminKey)}`);
+    if (!r.ok) return;
+    statsData = await r.json();
+
+    document.getElementById('statScans').textContent = statsData.scanCount;
+    document.getElementById('statSignups').textContent = statsData.signupCount;
+    document.getElementById('statProducts').textContent = statsData.productCount;
+    document.getElementById('statUptime').textContent = statsData.uptime;
+
+    // Activity feed
+    const feed = document.getElementById('activityFeed');
+    if (statsData.recentActivity.length === 0) {
+      feed.innerHTML = '<div style="color: var(--text-dim); text-align: center; padding: 30px;">No activity yet</div>';
+    } else {
+      feed.innerHTML = statsData.recentActivity.map(a => {
+        const iconClass = a.type === 'scan' ? 'scan' : a.type === 'signup' ? 'signup' : a.type.startsWith('product') ? 'product' : 'scrape';
+        const icon = a.type === 'scan' ? '&#9673;' : a.type === 'signup' ? '&#9993;' : a.type.startsWith('product') ? '&#9733;' : '&#8635;';
+        const time = new Date(a.timestamp).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+        return `<div class="activity-item"><span class="activity-time">${time}</span><div class="activity-icon ${iconClass}">${icon}</div><span class="activity-detail">${esc(a.detail)}</span></div>`;
+      }).join('');
+    }
+
+    // Signups feed
+    const sf = document.getElementById('signupsFeed');
+    if (statsData.signups.length === 0) {
+      sf.innerHTML = '<div style="color: var(--text-dim); text-align: center; padding: 30px;">No signups yet</div>';
+    } else {
+      sf.innerHTML = statsData.signups.map(s =>
+        `<div class="activity-item"><span class="activity-time">${esc(s.timestamp?.split(',')[0] || '')}</span><div class="activity-icon signup">&#9993;</div><span class="activity-detail"><strong>${esc(s.name)}</strong> &lt;${esc(s.email)}&gt; ${s.strain !== 'None' ? '- ' + esc(s.strain) : ''}</span></div>`
+      ).join('');
+    }
+
+    // Build charts from products
+    loadProducts(true);
+  } catch (e) {
+    console.error('Dashboard load error:', e);
+  }
+}
+
+function buildCharts() {
+  const strains = products.strains || {};
+  const cats = {}, types = {};
+  for (const [name, p] of Object.entries(strains)) {
+    cats[p.category] = (cats[p.category] || 0) + 1;
+    types[p.type] = (types[p.type] || 0) + 1;
+  }
+
+  // Category chart
+  const catEl = document.getElementById('categoryChart');
+  const maxCat = Math.max(...Object.values(cats), 1);
+  catEl.innerHTML = Object.entries(cats).sort((a,b)=>b[1]-a[1]).map(([k,v]) =>
+    `<div class="bar-col"><div class="bar-value">${v}</div><div class="bar" style="height:${(v/maxCat)*100}%"></div><div class="bar-label">${esc(k.split(' ')[0])}</div></div>`
+  ).join('');
+
+  // Type chart
+  const typeEl = document.getElementById('typeChart');
+  const maxType = Math.max(...Object.values(types), 1);
+  const typeColors = { Indica: 'var(--indica)', Sativa: 'var(--sativa)', Hybrid: 'var(--hybrid)' };
+  typeEl.innerHTML = Object.entries(types).map(([k,v]) =>
+    `<div class="bar-col"><div class="bar-value">${v}</div><div class="bar" style="height:${(v/maxType)*100}%;background:${typeColors[k]||'var(--accent)'}"></div><div class="bar-label">${esc(k)}</div></div>`
+  ).join('');
+}
+
+// --- Products ---
+async function loadProducts(chartsOnly) {
+  try {
+    const r = await fetch(`${API}/api/admin/products?key=${encodeURIComponent(adminKey)}`);
+    if (!r.ok) return;
+    products = await r.json();
+    buildCharts();
+    if (!chartsOnly) {
+      populateFilters();
+      renderProducts();
+    }
+  } catch (e) {
+    console.error('Products load error:', e);
+  }
+}
+
+function populateFilters() {
+  const cats = new Set();
+  for (const p of Object.values(products.strains || {})) cats.add(p.category);
+  const sel = document.getElementById('productCategory');
+  const current = sel.value;
+  sel.innerHTML = '<option value="">All Categories</option>' + [...cats].sort().map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+  sel.value = current;
+}
+
+function renderProducts() {
+  const search = document.getElementById('productSearch').value.toLowerCase();
+  const cat = document.getElementById('productCategory').value;
+  const type = document.getElementById('productType').value;
+  const tbody = document.getElementById('productTable');
+  const strains = products.strains || {};
+
+  let filtered = Object.entries(strains).filter(([name, p]) => {
+    if (search && !name.toLowerCase().includes(search) && !p.flavor?.toLowerCase().includes(search) && !p.genetics?.toLowerCase().includes(search)) return false;
+    if (cat && p.category !== cat) return false;
+    if (type && p.type !== type) return false;
+    return true;
+  });
+
+  document.getElementById('productCount').textContent = `Showing ${filtered.length} of ${Object.keys(strains).length} products`;
+
+  tbody.innerHTML = filtered.map(([name, p]) => {
+    const typeClass = p.type?.toLowerCase() || 'hybrid';
+    return `<tr>
+      <td>${p.image ? `<img class="thumb" src="${esc(p.image)}" onerror="this.style.display='none'" loading="lazy">` : ''}</td>
+      <td><strong>${esc(name)}</strong></td>
+      <td><span class="badge badge-${typeClass}">${esc(p.type)}</span></td>
+      <td style="color:var(--text-muted);font-size:13px;">${esc(p.category)}</td>
+      <td style="font-family:'JetBrains Mono',monospace;font-size:13px;">${esc(p.thc)}</td>
+      <td style="color:var(--text-muted);font-size:13px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(p.flavor)}</td>
+      <td style="white-space:nowrap;">
+        <button class="btn btn-outline btn-sm" onclick="openEditModal('${esc(name.replace(/'/g, "\\'"))}')">Edit</button>
+        <button class="btn btn-danger btn-sm" onclick="deleteProduct('${esc(name.replace(/'/g, "\\'"))}')">Del</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+// --- Product Modal ---
+function openAddModal() {
+  editingProduct = null;
+  document.getElementById('modalTitle').textContent = 'Add Product';
+  document.getElementById('fName').value = '';
+  document.getElementById('fName').disabled = false;
+  document.getElementById('fType').value = 'Hybrid';
+  document.getElementById('fCategory').value = '';
+  document.getElementById('fThc').value = '';
+  document.getElementById('fTerpenes').value = '';
+  document.getElementById('fGenetics').value = '';
+  document.getElementById('fLineage').value = '';
+  document.getElementById('fFlavor').value = '';
+  document.getElementById('fEffects').value = '';
+  document.getElementById('fDescription').value = '';
+  document.getElementById('fImage').value = '';
+  document.getElementById('productModal').classList.add('open');
+}
+
+function openEditModal(name) {
+  const p = products.strains[name];
+  if (!p) return;
+  editingProduct = name;
+  document.getElementById('modalTitle').textContent = 'Edit: ' + name;
+  document.getElementById('fName').value = name;
+  document.getElementById('fName').disabled = true;
+  document.getElementById('fType').value = p.type || 'Hybrid';
+  document.getElementById('fCategory').value = p.category || '';
+  document.getElementById('fThc').value = p.thc || '';
+  document.getElementById('fTerpenes').value = p.terpenes || '';
+  document.getElementById('fGenetics').value = p.genetics || '';
+  document.getElementById('fLineage').value = p.lineage || '';
+  document.getElementById('fFlavor').value = p.flavor || '';
+  document.getElementById('fEffects').value = p.effects || '';
+  document.getElementById('fDescription').value = p.description || '';
+  document.getElementById('fImage').value = p.image || '';
+  document.getElementById('productModal').classList.add('open');
+}
+
+function closeModal() {
+  document.getElementById('productModal').classList.remove('open');
+}
+
+async function saveProduct() {
+  const data = {
+    type: document.getElementById('fType').value,
+    category: document.getElementById('fCategory').value,
+    thc: document.getElementById('fThc').value,
+    terpenes: document.getElementById('fTerpenes').value,
+    genetics: document.getElementById('fGenetics').value,
+    lineage: document.getElementById('fLineage').value,
+    flavor: document.getElementById('fFlavor').value,
+    effects: document.getElementById('fEffects').value,
+    description: document.getElementById('fDescription').value,
+    image: document.getElementById('fImage').value,
+  };
+
+  try {
+    let r;
+    if (editingProduct) {
+      r = await fetch(`${API}/api/admin/products/${encodeURIComponent(editingProduct)}?key=${encodeURIComponent(adminKey)}`, {
+        method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data)
+      });
+    } else {
+      const name = document.getElementById('fName').value.trim();
+      if (!name) { toast('Product name required', true); return; }
+      data.name = name;
+      r = await fetch(`${API}/api/admin/products?key=${encodeURIComponent(adminKey)}`, {
+        method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data)
+      });
+    }
+
+    if (r.ok) {
+      closeModal();
+      toast(editingProduct ? 'Product updated' : 'Product added');
+      loadProducts();
+    } else {
+      const err = await r.json();
+      toast(err.error || 'Save failed', true);
+    }
+  } catch (e) {
+    toast('Network error', true);
+  }
+}
+
+async function deleteProduct(name) {
+  if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
+  try {
+    const r = await fetch(`${API}/api/admin/products/${encodeURIComponent(name)}?key=${encodeURIComponent(adminKey)}`, { method: 'DELETE' });
+    if (r.ok) {
+      toast('Product deleted');
+      loadProducts();
+    } else {
+      toast('Delete failed', true);
+    }
+  } catch (e) {
+    toast('Network error', true);
+  }
+}
+
+// --- Scraper ---
+async function doScrape() {
+  const btn = document.getElementById('scrapeBtn');
+  const status = document.getElementById('scrapeStatus');
+  btn.disabled = true;
+  status.innerHTML = '<span class="spinner"></span> Scraping...';
+
+  try {
+    const r = await fetch(`${API}/api/admin/scrape?key=${encodeURIComponent(adminKey)}`, { method: 'POST' });
+    const data = await r.json();
+
+    if (!r.ok) {
+      status.textContent = 'Error: ' + (data.error || 'Unknown');
+      btn.disabled = false;
+      return;
+    }
+
+    status.textContent = `Found ${data.totalFound} products (${data.newProducts} new)`;
+
+    const results = document.getElementById('scrapeResults');
+    if (data.products.length === 0) {
+      results.innerHTML = '<div style="color: var(--text-dim); padding: 20px; text-align: center;">No products found. The site may use JavaScript rendering.</div>';
+    } else {
+      results.innerHTML = '<h3 style="font-family:Oswald,sans-serif;margin-bottom:12px;">Discovered Products</h3>' +
+        data.products.map(p =>
+          `<div class="scrape-item">
+            <div>
+              <span class="name">${esc(p.name)}</span>
+              ${p.url ? `<a href="${esc(p.url)}" target="_blank" style="color:var(--accent);font-size:12px;margin-left:8px;">view</a>` : ''}
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              ${p.isNew ? '<span class="new-badge">NEW</span>' : '<span class="existing-badge">EXISTS</span>'}
+              ${p.isNew ? `<button class="btn btn-sm" onclick="importProduct('${esc(p.name.replace(/'/g, "\\'"))}','${esc((p.url||'').replace(/'/g, "\\'"))}')">Import</button>` : ''}
+            </div>
+          </div>`
+        ).join('');
+
+      if (data.images.length > 0) {
+        results.innerHTML += '<h3 style="font-family:Oswald,sans-serif;margin:20px 0 12px;">Discovered Images (' + data.images.length + ')</h3>' +
+          '<div style="display:flex;flex-wrap:wrap;gap:8px;">' +
+          data.images.slice(0, 20).map(img =>
+            `<img src="${esc(img)}" style="width:60px;height:60px;object-fit:cover;border-radius:6px;border:1px solid var(--border);" loading="lazy" onerror="this.style.display='none'">`
+          ).join('') + '</div>';
+      }
+    }
+  } catch (e) {
+    status.textContent = 'Network error';
+  }
+  btn.disabled = false;
+}
+
+function importProduct(name, url) {
+  editingProduct = null;
+  document.getElementById('modalTitle').textContent = 'Import: ' + name;
+  document.getElementById('fName').value = name;
+  document.getElementById('fName').disabled = false;
+  document.getElementById('fType').value = 'Hybrid';
+  document.getElementById('fCategory').value = '';
+  document.getElementById('fThc').value = '';
+  document.getElementById('fTerpenes').value = '';
+  document.getElementById('fGenetics').value = '';
+  document.getElementById('fLineage').value = '';
+  document.getElementById('fFlavor').value = '';
+  document.getElementById('fEffects').value = '';
+  document.getElementById('fDescription').value = '';
+  document.getElementById('fImage').value = '';
+  document.getElementById('productModal').classList.add('open');
+}
+
+// --- Settings ---
+async function loadSettings() {
+  try {
+    const r = await fetch(`${API}/api/health`);
+    const health = await r.json();
+
+    const envVars = [
+      { name: 'ANTHROPIC_API_KEY', desc: 'Claude Vision scanning', ok: health.status === 'ok' },
+      { name: 'ADMIN_KEY', desc: 'Admin authentication', ok: true },
+      { name: 'SMTP_USER', desc: 'Email notifications', ok: health.emailConfigured },
+      { name: 'SMTP_PASS', desc: 'Email password', ok: health.emailConfigured },
+      { name: 'SMTP_HOST', desc: 'Email server host', ok: true },
+      { name: 'NOTIFY_EMAIL', desc: 'Notification recipient', ok: true },
+    ];
+
+    document.getElementById('settingsGrid').innerHTML = envVars.map(v =>
+      `<div class="setting-row">
+        <div><div class="setting-name">${v.name}</div><div style="color:var(--text-dim);font-size:12px;">${v.desc}</div></div>
+        <span class="setting-status ${v.ok ? 'ok' : 'missing'}">${v.ok ? 'Configured' : 'Not Set'}</span>
+      </div>`
+    ).join('');
+
+    document.getElementById('healthInfo').innerHTML = `
+      <div class="setting-row"><div class="setting-name">Server Status</div><span class="setting-status ok">${health.status.toUpperCase()}</span></div>
+      <div class="setting-row"><div class="setting-name">Uptime</div><span class="setting-status ok">${formatUptime(health.uptime)}</span></div>
+      <div class="setting-row"><div class="setting-name">Signups in Memory</div><span class="setting-status ok">${health.signups}</span></div>
+      <div class="setting-row"><div class="setting-name">Email Configured</div><span class="setting-status ${health.emailConfigured ? 'ok' : 'missing'}">${health.emailConfigured ? 'Yes' : 'No'}</span></div>
+      <div class="setting-row"><div class="setting-name">Products on Disk</div><span class="setting-status ok">${Object.keys(products.strains||{}).length}</span></div>
+    `;
+  } catch (e) {
+    document.getElementById('healthInfo').innerHTML = '<div class="setting-row"><div class="setting-name">Error</div><span class="setting-status missing">Could not reach server</span></div>';
+  }
+}
+
+// --- Helpers ---
+function esc(s) {
+  if (!s) return '';
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function formatUptime(sec) {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = Math.floor(sec % 60);
+  return `${h}h ${m}m ${s}s`;
+}
+
+function toast(msg, isError) {
+  const el = document.createElement('div');
+  el.className = 'toast' + (isError ? ' error' : '');
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 3000);
+}
+
+// --- Init ---
+if (adminKey) {
+  testAuth();
+}
+</script>
+</body>
+</html>

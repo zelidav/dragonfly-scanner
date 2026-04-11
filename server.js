@@ -2,6 +2,7 @@ const express = require("express");
 const nodemailer = require("nodemailer");
 const cors = require("cors");
 const path = require("path");
+const fs = require("fs");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -11,6 +12,60 @@ app.use(express.json({ limit: "10mb" }));
 
 // Serve static frontend build in production
 app.use(express.static(path.join(__dirname, "dist")));
+
+// --- Admin static files ------------------------------------------------------
+app.use("/admin", express.static(path.join(__dirname, "public")));
+
+// --- In-memory tracking ------------------------------------------------------
+const serverStartTime = Date.now();
+let scanCount = 0;
+const recentScans = []; // last 50
+const activityLog = []; // last 100 activity entries
+
+function logActivity(type, detail) {
+  activityLog.unshift({ type, detail, timestamp: new Date().toISOString() });
+  if (activityLog.length > 100) activityLog.length = 100;
+}
+
+// --- Products persistence ----------------------------------------------------
+const DATA_DIR = path.join(__dirname, "data");
+const PRODUCTS_FILE = path.join(DATA_DIR, "products.json");
+
+function loadProducts() {
+  try {
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    if (fs.existsSync(PRODUCTS_FILE)) {
+      const raw = fs.readFileSync(PRODUCTS_FILE, "utf-8");
+      return JSON.parse(raw);
+    }
+  } catch (err) {
+    console.error("Error loading products.json:", err.message);
+  }
+  return { strains: {} };
+}
+
+function saveProducts(data) {
+  try {
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(PRODUCTS_FILE, JSON.stringify(data, null, 2), "utf-8");
+  } catch (err) {
+    console.error("Error saving products.json:", err.message);
+  }
+}
+
+let productsDB = loadProducts();
+
+// --- Admin auth middleware ----------------------------------------------------
+function requireAdmin(req, res, next) {
+  const key = req.query.key;
+  if (!process.env.ADMIN_KEY) {
+    return res.status(500).json({ error: "ADMIN_KEY not configured on server." });
+  }
+  if (key !== process.env.ADMIN_KEY) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  next();
+}
 
 // --- Claude Vision API Proxy ----------------------------------------------
 // Keeps the Anthropic API key server-side. Frontend POSTs image to /api/scan,
@@ -79,6 +134,13 @@ Rules:
     const result = await response.json();
     const strain = result.content?.[0]?.text?.trim() || "UNKNOWN";
     console.log(`Vision scan result: "${strain}"`);
+
+    // Track scan
+    scanCount++;
+    recentScans.unshift({ strain, timestamp: new Date().toISOString() });
+    if (recentScans.length > 50) recentScans.length = 50;
+    logActivity("scan", `Scanned: ${strain}`);
+
     res.json({ strain });
   } catch (err) {
     console.error("Vision proxy error:", err.message);
@@ -133,6 +195,7 @@ app.post("/api/signup", async (req, res) => {
   // Store in memory
   const entry = { name, email, phone: phone || "Not provided", strain: strain || "None", timestamp };
   signups.push(entry);
+  logActivity("signup", `New signup: ${name} <${email}>`);
 
   // Build email
   const htmlBody = `
@@ -242,6 +305,161 @@ app.get("/api/health", (req, res) => {
   });
 });
 
+// --- Admin API Endpoints ---------------------------------------------------
+
+// Stats
+app.get("/api/admin/stats", requireAdmin, (req, res) => {
+  const uptimeSec = Math.floor((Date.now() - serverStartTime) / 1000);
+  const hours = Math.floor(uptimeSec / 3600);
+  const mins = Math.floor((uptimeSec % 3600) / 60);
+  const secs = uptimeSec % 60;
+
+  res.json({
+    scanCount,
+    signupCount: signups.length,
+    productCount: Object.keys(productsDB.strains || {}).length,
+    uptime: `${hours}h ${mins}m ${secs}s`,
+    uptimeSeconds: uptimeSec,
+    recentScans: recentScans.slice(0, 20),
+    recentActivity: activityLog.slice(0, 30),
+    signups: signups.slice(-20).reverse(),
+  });
+});
+
+// Get all products
+app.get("/api/admin/products", requireAdmin, (req, res) => {
+  res.json(productsDB);
+});
+
+// Update a product
+app.put("/api/admin/products/:name", requireAdmin, (req, res) => {
+  const name = decodeURIComponent(req.params.name);
+  if (!productsDB.strains[name]) {
+    return res.status(404).json({ error: `Product "${name}" not found.` });
+  }
+  productsDB.strains[name] = { ...productsDB.strains[name], ...req.body };
+  saveProducts(productsDB);
+  logActivity("product_update", `Updated product: ${name}`);
+  res.json({ success: true, product: productsDB.strains[name] });
+});
+
+// Add a product
+app.post("/api/admin/products", requireAdmin, (req, res) => {
+  const { name, ...fields } = req.body;
+  if (!name) {
+    return res.status(400).json({ error: "Product name is required." });
+  }
+  if (productsDB.strains[name]) {
+    return res.status(409).json({ error: `Product "${name}" already exists.` });
+  }
+  productsDB.strains[name] = fields;
+  saveProducts(productsDB);
+  logActivity("product_add", `Added product: ${name}`);
+  res.json({ success: true, product: productsDB.strains[name] });
+});
+
+// Delete a product
+app.delete("/api/admin/products/:name", requireAdmin, (req, res) => {
+  const name = decodeURIComponent(req.params.name);
+  if (!productsDB.strains[name]) {
+    return res.status(404).json({ error: `Product "${name}" not found.` });
+  }
+  delete productsDB.strains[name];
+  saveProducts(productsDB);
+  logActivity("product_delete", `Deleted product: ${name}`);
+  res.json({ success: true });
+});
+
+// Scrape dragonflybrandny.com
+app.post("/api/admin/scrape", requireAdmin, async (req, res) => {
+  try {
+    logActivity("scrape", "Scrape initiated");
+
+    // Fetch the shop page
+    const shopUrl = "https://dragonflybrandny.com/shop/";
+    const response = await fetch(shopUrl, {
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; DragonflyAdmin/1.0)" }
+    });
+
+    if (!response.ok) {
+      return res.status(502).json({ error: `Failed to fetch shop page: ${response.status}` });
+    }
+
+    const html = await response.text();
+    const discovered = [];
+
+    // Strategy 1: Look for WooCommerce product patterns
+    // <a href="https://dragonflybrandny.com/product/PRODUCT-NAME/">
+    const productLinkRegex = /href="(https?:\/\/dragonflybrandny\.com\/product\/([^/"]+)\/?)"[^>]*>/gi;
+    let match;
+    const seenSlugs = new Set();
+
+    while ((match = productLinkRegex.exec(html)) !== null) {
+      const url = match[1];
+      const slug = match[2];
+      if (seenSlugs.has(slug)) continue;
+      seenSlugs.add(slug);
+
+      // Convert slug to name
+      const name = slug.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+
+      discovered.push({ name, slug, url });
+    }
+
+    // Strategy 2: Look for product images
+    // src="...wp-content/uploads/...PRODUCT-IMAGE.webp"
+    const imageRegex = /src="(https?:\/\/dragonflybrandny\.com\/wp-content\/uploads\/[^"]+\.(webp|jpg|png|jpeg))"/gi;
+    const discoveredImages = [];
+    while ((match = imageRegex.exec(html)) !== null) {
+      discoveredImages.push(match[1]);
+    }
+
+    // Strategy 3: Look for product titles in common WooCommerce markup
+    // <h2 class="woocommerce-loop-product__title">PRODUCT NAME</h2>
+    const titleRegex = /<h[23][^>]*class="[^"]*product[^"]*title[^"]*"[^>]*>([^<]+)<\/h[23]>/gi;
+    while ((match = titleRegex.exec(html)) !== null) {
+      const name = match[1].trim();
+      const existing = discovered.find(d => d.name.toLowerCase() === name.toLowerCase());
+      if (!existing && name.length > 1) {
+        discovered.push({ name, slug: name.toLowerCase().replace(/\s+/g, "-"), url: null });
+      }
+    }
+
+    // Strategy 4: Look for price patterns
+    const priceRegex = /<span class="[^"]*amount[^"]*">[^<]*?(\$[\d,.]+)/gi;
+    const prices = [];
+    while ((match = priceRegex.exec(html)) !== null) {
+      prices.push(match[1]);
+    }
+
+    // Check which are new vs existing
+    const existingNames = new Set(Object.keys(productsDB.strains || {}).map(n => n.toLowerCase()));
+    const results = discovered.map(d => ({
+      ...d,
+      isNew: !existingNames.has(d.name.toLowerCase()),
+    }));
+
+    logActivity("scrape", `Scrape complete: found ${results.length} products, ${results.filter(r => r.isNew).length} new`);
+
+    res.json({
+      success: true,
+      totalFound: results.length,
+      newProducts: results.filter(r => r.isNew).length,
+      products: results,
+      images: discoveredImages.slice(0, 50),
+      prices,
+    });
+  } catch (err) {
+    console.error("Scrape error:", err.message);
+    res.status(500).json({ error: "Scrape failed: " + err.message });
+  }
+});
+
+// Admin route - serve admin.html
+app.get("/admin", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "admin.html"));
+});
+
 // --- SPA fallback ----------------------------------------------------------
 app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "dist", "index.html"));
@@ -251,5 +469,7 @@ app.listen(PORT, () => {
   console.log(`\nDragonfly Scanner API running on port ${PORT}`);
   console.log(`  Notifications -> ${NOTIFY_EMAIL}`);
   console.log(`  SMTP configured: ${!!(process.env.SMTP_USER && process.env.SMTP_PASS)}`);
-  console.log(`  Admin signups:   /api/signups${process.env.ADMIN_KEY ? "?key=***" : ""}\n`);
+  console.log(`  Admin signups:   /api/signups${process.env.ADMIN_KEY ? "?key=***" : ""}`);
+  console.log(`  Admin dashboard: /admin`);
+  console.log(`  Products loaded: ${Object.keys(productsDB.strains || {}).length} strains\n`);
 });
