@@ -65,6 +65,15 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+// --- Retailers data ---------------------------------------------------------
+const RETAILERS_FILE = path.join(DATA_DIR, "retailers.json");
+let retailers = [];
+try { retailers = JSON.parse(fs.readFileSync(RETAILERS_FILE, "utf-8")); } catch (e) {}
+
+app.get("/api/retailers", (req, res) => {
+  res.json(retailers);
+});
+
 // --- Claude Vision API Proxy ----------------------------------------------
 // Keeps the Anthropic API key server-side. Frontend POSTs image to /api/scan,
 // server forwards to Claude, returns the strain name.

@@ -1,0 +1,740 @@
+[
+  {
+    "name": "3rd Rock Cannabis",
+    "street": "131-135 Saratoga Avenue Suite #7",
+    "city": "South Glens Falls",
+    "state": "NY",
+    "zip": "12803",
+    "lat": 43.2875669,
+    "lng": -73.6382599
+  },
+  {
+    "name": "Air City Cannabis",
+    "street": "1707 Oriskany Street W",
+    "city": "Utica",
+    "state": "NY",
+    "zip": "13502",
+    "lat": 43.109437,
+    "lng": -75.2533583
+  },
+  {
+    "name": "Aroma Farms",
+    "street": "209-17 Northern Blvd",
+    "city": "Bayside",
+    "state": "NY",
+    "zip": "11361",
+    "lat": 40.7593079,
+    "lng": -73.77410309999999
+  },
+  {
+    "name": "BESTBUDZ",
+    "street": "146 VIRGINIA",
+    "city": "Buffalo",
+    "state": "NY",
+    "zip": "14201",
+    "lat": 42.893282,
+    "lng": -78.8856058
+  },
+  {
+    "name": "BK Exotic",
+    "street": "1056 Flatbush Ave",
+    "city": "Brooklyn",
+    "state": "NY",
+    "zip": "11226",
+    "lat": 40.6452158,
+    "lng": -73.9583073
+  },
+  {
+    "name": "Bronx Joint",
+    "street": "925 Hunts Point Ave",
+    "city": "Bronx",
+    "state": "NY",
+    "zip": "10459",
+    "lat": 40.8203683,
+    "lng": -73.8914534
+  },
+  {
+    "name": "BX Buddiez",
+    "street": "2935 3rd Ave",
+    "city": "Bronx",
+    "state": "NY",
+    "zip": "10455",
+    "lat": 40.8178023,
+    "lng": -73.9159706
+  },
+  {
+    "name": "Canna Buddha",
+    "street": "215-46 39th Ave",
+    "city": "Bayside",
+    "state": "NY",
+    "zip": "11361",
+    "lat": 40.7658889,
+    "lng": -73.7674821
+  },
+  {
+    "name": "Canna Family",
+    "street": "102-15 159th Road",
+    "city": "Howard Beach",
+    "state": "NY",
+    "zip": "11414",
+    "lat": 40.6599896,
+    "lng": -73.83080129999999
+  },
+  {
+    "name": "Canna Planet Dispensary - Monticello",
+    "street": "73 Pleasant Street",
+    "city": "Monticello",
+    "state": "NY",
+    "zip": "12701",
+    "lat": 41.6591951,
+    "lng": -74.6802943
+  },
+  {
+    "name": "Canterra - Buffalo",
+    "street": "451 Elmwood ave",
+    "city": "Buffalo",
+    "state": "NY",
+    "zip": "14222",
+    "lat": 42.9095067,
+    "lng": -78.8768047
+  },
+  {
+    "name": "Capital District Cannabis & Wellness - Albany",
+    "street": "997 Central Ave",
+    "city": "Albany",
+    "state": "NY",
+    "zip": "12205",
+    "lat": 42.6848245,
+    "lng": -73.7948199
+  },
+  {
+    "name": "Capital District Cannabis & Wellness - Schenectady",
+    "street": "1650 Crane Street Suite 1",
+    "city": "Schenectady",
+    "state": "NY",
+    "zip": "12303",
+    "lat": 42.7897444,
+    "lng": -73.9451028
+  },
+  {
+    "name": "Chesterfield Cannabis Co.",
+    "street": "89 Kent St",
+    "city": "Keeseville",
+    "state": "NY",
+    "zip": "12944",
+    "lat": 44.5046837,
+    "lng": -73.4788988
+  },
+  {
+    "name": "Chronic Brooklyn",
+    "street": "483 3rd Ave",
+    "city": "Brooklyn",
+    "state": "NY",
+    "zip": "11215",
+    "lat": 40.6704669,
+    "lng": -73.99157699999999
+  },
+  {
+    "name": "Command Cannabis",
+    "street": "3871 South Park Ave",
+    "city": "Blasdell",
+    "state": "NY",
+    "zip": "14219",
+    "lat": 42.7921929,
+    "lng": -78.824328
+  },
+  {
+    "name": "Coney Island Cannabis",
+    "street": "875 Neptune Ave",
+    "city": "Brooklyn",
+    "state": "NY",
+    "zip": "11224",
+    "lat": 40.579709,
+    "lng": -73.97892809999999
+  },
+  {
+    "name": "County Road Cannabis",
+    "street": "1326 County Rd 12",
+    "city": "New Hampton",
+    "state": "NY",
+    "zip": "10958",
+    "lat": 41.3841587,
+    "lng": -74.42309039999999
+  },
+  {
+    "name": "Domes Dispensary",
+    "street": "268 Forest Hill Drive",
+    "city": "Kingston",
+    "state": "NY",
+    "zip": "12401",
+    "lat": 41.9498766,
+    "lng": -74.0430054
+  },
+  {
+    "name": "Ether",
+    "street": "5100 Genesee Street",
+    "city": "Buffalo",
+    "state": "NY",
+    "zip": "14225",
+    "lat": 42.9382042,
+    "lng": -78.6977378
+  },
+  {
+    "name": "Firehaus",
+    "street": "7479 US Highway 11",
+    "city": "Potsdam",
+    "state": "NY",
+    "zip": "13676",
+    "lat": 44.665011,
+    "lng": -75.03020889999999
+  },
+  {
+    "name": "Fireleaf",
+    "street": "2102 Ralph Avenue",
+    "city": "Brooklyn",
+    "state": "NY",
+    "zip": "11234",
+    "lat": 40.626252,
+    "lng": -73.91830039999999
+  },
+  {
+    "name": "Flynnstoned - Baytowne",
+    "street": "1900 Empire Blvd. Suite 190",
+    "city": "Webster",
+    "state": "NY",
+    "zip": "14580",
+    "lat": 43.1917382,
+    "lng": -77.5008416
+  },
+  {
+    "name": "Forever 420",
+    "street": "1118 Pennsylvania Ave",
+    "city": "Brooklyn",
+    "state": "NY",
+    "zip": "11207",
+    "lat": 40.6530766,
+    "lng": -73.88699559999999
+  },
+  {
+    "name": "Goldleaf Cannabis",
+    "street": "235 Fairview Ave",
+    "city": "Hudson",
+    "state": "NY",
+    "zip": "12534",
+    "lat": 42.2610129,
+    "lng": -73.7652106
+  },
+  {
+    "name": "Green Apple",
+    "street": "572 Manhattan Avenue",
+    "city": "Brooklyn",
+    "state": "NY",
+    "zip": "11222",
+    "lat": 40.7225996,
+    "lng": -73.9498882
+  },
+  {
+    "name": "Green Flower Wellness - Oakland Gardens",
+    "street": "214-24 73rd Ave",
+    "city": "Oakland Gardens",
+    "state": "NY",
+    "zip": "11364",
+    "lat": 40.7403183,
+    "lng": -73.7591185
+  },
+  {
+    "name": "Green Flower Wellness - Queens",
+    "street": "270-01 Hillside Avenue",
+    "city": "Queens",
+    "state": "NY",
+    "zip": "11040",
+    "lat": 40.7393331,
+    "lng": -73.7004504
+  },
+  {
+    "name": "Guardian Wellness LLC",
+    "street": "2500 Arthur Ave",
+    "city": "Bronx",
+    "state": "NY",
+    "zip": "10458",
+    "lat": 40.8578989,
+    "lng": -73.88529799999999
+  },
+  {
+    "name": "Happy Leaf Cannabis Store",
+    "street": "2760 Union Road",
+    "city": "Cheektowaga",
+    "state": "NY",
+    "zip": "14227",
+    "lat": 42.8872637,
+    "lng": -78.7550308
+  },
+  {
+    "name": "Happy Times Cannabis Co - Buffalo",
+    "street": "3807 Harlem Rd",
+    "city": "Buffalo",
+    "state": "NY",
+    "zip": "14215",
+    "lat": 42.9474578,
+    "lng": -78.783704
+  },
+  {
+    "name": "Happy Times Cannabis Co - Niagara Falls",
+    "street": "7560 Niagara Falls Blvd",
+    "city": "Niagara Falls",
+    "state": "NY",
+    "zip": "14304",
+    "lat": 43.0884043,
+    "lng": -78.97742219999999
+  },
+  {
+    "name": "Hazy Daze",
+    "street": "332 Broad Street",
+    "city": "Waverly",
+    "state": "NY",
+    "zip": "14892",
+    "lat": 42.0009371,
+    "lng": -76.5401572
+  },
+  {
+    "name": "Healthy Choice Seaview LLC",
+    "street": "3858 Broadway",
+    "city": "New York",
+    "state": "NY",
+    "zip": "10032",
+    "lat": 40.83622099999999,
+    "lng": -73.94288809999999
+  },
+  {
+    "name": "Herbarium Queens",
+    "street": "465 Onderdonk Ave",
+    "city": "Ridgewood",
+    "state": "NY",
+    "zip": "11385",
+    "lat": 40.7070015,
+    "lng": -73.9119365
+  },
+  {
+    "name": "High Society Dispensary LLC",
+    "street": "345 Main Street Suite 2",
+    "city": "Hudson Falls",
+    "state": "NY",
+    "zip": "12839",
+    "lat": 43.3135438,
+    "lng": -73.5785063
+  },
+  {
+    "name": "Highlife Health, LLC",
+    "street": "19 Huguenot Street",
+    "city": "New Rochelle",
+    "state": "NY",
+    "zip": "10801",
+    "lat": 40.9143132,
+    "lng": -73.7741309
+  },
+  {
+    "name": "House of Strains",
+    "street": "16105 29th Ave",
+    "city": "Flushing",
+    "state": "NY",
+    "zip": "11358",
+    "lat": 40.7713227,
+    "lng": -73.8031336
+  },
+  {
+    "name": "Just A Little Higher - Troy",
+    "street": "740 Hoosick Rd",
+    "city": "Troy",
+    "state": "NY",
+    "zip": "12180",
+    "lat": 42.7446852,
+    "lng": -73.6413874
+  },
+  {
+    "name": "Just Breathe - Binghamton",
+    "street": "75 Court St",
+    "city": "Binghamton",
+    "state": "NY",
+    "zip": "13901",
+    "lat": 42.0989027,
+    "lng": -75.9117562
+  },
+  {
+    "name": "Just Breathe - Fingerlakes",
+    "street": "2988 Auburn Rd",
+    "city": "Tyre",
+    "state": "NY",
+    "zip": "13148",
+    "lat": 42.9495297,
+    "lng": -76.7664514
+  },
+  {
+    "name": "Kushmart - Brooklyn",
+    "street": "1413 Kings Highway",
+    "city": "Brooklyn",
+    "state": "NY",
+    "zip": "11229",
+    "lat": 40.6087801,
+    "lng": -73.95872440000001
+  },
+  {
+    "name": "Leafy Peaks",
+    "street": "27B Saratoga Avenue",
+    "city": "Waterford",
+    "state": "NY",
+    "zip": "12188",
+    "lat": 42.7815579,
+    "lng": -73.6952898
+  },
+  {
+    "name": "Legacy Dispensary",
+    "street": "1839 Central Ave.",
+    "city": "Albany",
+    "state": "NY",
+    "zip": "12205",
+    "lat": 42.7316368,
+    "lng": -73.8479712
+  },
+  {
+    "name": "Lenox Hill Cannabis Co.",
+    "street": "334 E 73rd St",
+    "city": "New York",
+    "state": "NY",
+    "zip": "10021",
+    "lat": 40.7686073,
+    "lng": -73.9562978
+  },
+  {
+    "name": "Liberty Buds",
+    "street": "1115 1st Avenue",
+    "city": "New York",
+    "state": "NY",
+    "zip": "10065",
+    "lat": 40.7611236,
+    "lng": -73.9611302
+  },
+  {
+    "name": "Loudpack Exotics",
+    "street": "6606 Kinne Road",
+    "city": "Syracuse",
+    "state": "NY",
+    "zip": "13214",
+    "lat": 43.0422941,
+    "lng": -76.0637122
+  },
+  {
+    "name": "Mango Cannabis",
+    "street": "3553 West Henrietta Road",
+    "city": "Rochester",
+    "state": "NY",
+    "zip": "14623",
+    "lat": 43.0826386,
+    "lng": -77.6398633
+  },
+  {
+    "name": "Misha's Flower Shop",
+    "street": "299 Knickerbocker Ave",
+    "city": "Brooklyn",
+    "state": "NY",
+    "zip": "11237",
+    "lat": 40.7019584,
+    "lng": -73.9233426
+  },
+  {
+    "name": "Munchies Dispensary",
+    "street": "8701 Rockaway Beach Blvd",
+    "city": "Rockaway Beach",
+    "state": "NY",
+    "zip": "11693",
+    "lat": 40.5868435,
+    "lng": -73.81199289999999
+  },
+  {
+    "name": "Northern Lights Dispensary - Menands",
+    "street": "90 Broadway Spc 8",
+    "city": "Menands",
+    "state": "NY",
+    "zip": "12204",
+    "lat": 42.6827184,
+    "lng": -73.73335999999999
+  },
+  {
+    "name": "NSH",
+    "street": "2280 Flatbush Avenue",
+    "city": "Brooklyn",
+    "state": "NY",
+    "zip": "11234",
+    "lat": 40.6142909,
+    "lng": -73.9280715
+  },
+  {
+    "name": "NugHub NY",
+    "street": "1350 Forest Ave",
+    "city": "Staten Island",
+    "state": "NY",
+    "zip": "10302",
+    "lat": 40.6257244,
+    "lng": -74.1344635
+  },
+  {
+    "name": "NYC Bud - Long Island City",
+    "street": "4445 Vernon Blvd",
+    "city": "Long Island City",
+    "state": "NY",
+    "zip": "11101",
+    "lat": 40.7492538,
+    "lng": -73.95198549999999
+  },
+  {
+    "name": "NYC Bud - Midtown",
+    "street": "405 W 39th St",
+    "city": "New York",
+    "state": "NY",
+    "zip": "10018",
+    "lat": 40.7568256,
+    "lng": -73.9943833
+  },
+  {
+    "name": "Polanco Brothers Ridgewood",
+    "street": "6633 Fresh Pond Rd",
+    "city": "Ridgewood",
+    "state": "NY",
+    "zip": "11385",
+    "lat": 40.7080173,
+    "lng": -73.89745599999999
+  },
+  {
+    "name": "Purple Plains",
+    "street": "32 Westchester Avenue",
+    "city": "Pound Ridge",
+    "state": "NY",
+    "zip": "10576",
+    "lat": 41.1874094,
+    "lng": -73.5459238
+  },
+  {
+    "name": "QUBE",
+    "street": "1412 Broadway",
+    "city": "New York",
+    "state": "NY",
+    "zip": "10018",
+    "lat": 40.753615,
+    "lng": -73.9865612
+  },
+  {
+    "name": "Ripe Cannabis",
+    "street": "245 Broadway",
+    "city": "Schenectady",
+    "state": "NY",
+    "zip": "12305",
+    "lat": 42.8110461,
+    "lng": -73.9436513
+  },
+  {
+    "name": "RR Legacy Dispensary",
+    "street": "12 Hudson Ave",
+    "city": "Glen Falls",
+    "state": "NY",
+    "zip": "12801",
+    "lat": 43.3083943,
+    "lng": -73.6451127
+  },
+  {
+    "name": "Secret Garden 716",
+    "street": "1363 Delaware Ave",
+    "city": "Buffalo",
+    "state": "NY",
+    "zip": "14209",
+    "lat": 42.9213858,
+    "lng": -78.867226
+  },
+  {
+    "name": "Silver Cannabis Company - Saratoga Springs",
+    "street": "75 Weibel Ave",
+    "city": "Saratoga springs",
+    "state": "NY",
+    "zip": "12866",
+    "lat": 43.0946048,
+    "lng": -73.7444459
+  },
+  {
+    "name": "Sky High Club",
+    "street": "129 Avenue C",
+    "city": "New York",
+    "state": "NY",
+    "zip": "10009",
+    "lat": 40.7249117,
+    "lng": -73.9784841
+  },
+  {
+    "name": "Smiley Exotics",
+    "street": "201 E 30th Street",
+    "city": "New York",
+    "state": "NY",
+    "zip": "10016",
+    "lat": 40.7431957,
+    "lng": -73.9796348
+  },
+  {
+    "name": "Smokey Paradise",
+    "street": "574 Columbia Turnpike,",
+    "city": "East Greenbush",
+    "state": "NY",
+    "zip": "12061",
+    "lat": 42.6016227,
+    "lng": -73.7137664
+  },
+  {
+    "name": "Society House",
+    "street": "2441 Flatbush Ave",
+    "city": "Brooklyn",
+    "state": "NY",
+    "zip": "11234",
+    "lat": 40.6109823,
+    "lng": -73.92337549999999
+  },
+  {
+    "name": "Strong Strains",
+    "street": "19 Technology Dr",
+    "city": "East Setauket",
+    "state": "NY",
+    "zip": "11733",
+    "lat": 40.898152,
+    "lng": -73.087132
+  },
+  {
+    "name": "Sweet Life",
+    "street": "1662 First Avenue",
+    "city": "New York",
+    "state": "NY",
+    "zip": "10028",
+    "lat": 40.7772342,
+    "lng": -73.9488022
+  },
+  {
+    "name": "The Bushwick",
+    "street": "892 Wyckoff",
+    "city": "Brooklyn",
+    "state": "NY",
+    "zip": "11237",
+    "lat": 40.6969551,
+    "lng": -73.9068523
+  },
+  {
+    "name": "The Canna Guy LLC",
+    "street": "411 US-11",
+    "city": "Central Square",
+    "state": "NY",
+    "zip": "13036",
+    "lat": 43.2693982,
+    "lng": -76.1445284
+  },
+  {
+    "name": "The Cannabis Place",
+    "street": "74-03 Metropolitan Ave",
+    "city": "Middle Village",
+    "state": "NY",
+    "zip": "11379",
+    "lat": 40.7130274,
+    "lng": -73.8781226
+  },
+  {
+    "name": "The Herb Cave",
+    "street": "519 State Route 3",
+    "city": "Plattsburgh",
+    "state": "NY",
+    "zip": "12901",
+    "lat": 44.6958428,
+    "lng": -73.4986886
+  },
+  {
+    "name": "The Kokoro Way LLC",
+    "street": "2454 Elmwood Ave",
+    "city": "Kenmore",
+    "state": "NY",
+    "zip": "14217",
+    "lat": 42.964025,
+    "lng": -78.879177
+  },
+  {
+    "name": "The People's Joint",
+    "street": "501 State Street",
+    "city": "Schenectady",
+    "state": "NY",
+    "zip": "12305",
+    "lat": 42.8122341,
+    "lng": -73.9401037
+  },
+  {
+    "name": "Thrive Syracuse",
+    "street": "3065 Erie Blvd E",
+    "city": "Syracuse",
+    "state": "NY",
+    "zip": "13224",
+    "lat": 43.0559823,
+    "lng": -76.08411389999999
+  },
+  {
+    "name": "Tiki Leaves",
+    "street": "1511 Neptune Ave",
+    "city": "Brooklyn",
+    "state": "NY",
+    "zip": "11224",
+    "lat": 40.5793717,
+    "lng": -73.9835768
+  },
+  {
+    "name": "Torches NYC",
+    "street": "12 E 42nd St",
+    "city": "New York",
+    "state": "NY",
+    "zip": "10017",
+    "lat": 40.7530658,
+    "lng": -73.9805326
+  },
+  {
+    "name": "Twisted Vibration",
+    "street": "301 Broadway",
+    "city": "Brooklyn",
+    "state": "NY",
+    "zip": "11211",
+    "lat": 40.7084951,
+    "lng": -73.95759819999999
+  },
+  {
+    "name": "Two Buds Dispensary",
+    "street": "696 East 241st Street",
+    "city": "Bronx",
+    "state": "NY",
+    "zip": "10470",
+    "lat": 40.9033715,
+    "lng": -73.8507822
+  },
+  {
+    "name": "Union Chill",
+    "street": "34 W Pulteney St",
+    "city": "Corning",
+    "state": "NY",
+    "zip": "14830",
+    "lat": 42.1508078,
+    "lng": -77.06259299999999
+  },
+  {
+    "name": "Urban Weeds LLC",
+    "street": "31-35 Steinway Street",
+    "city": "Astoria",
+    "state": "NY",
+    "zip": "11103",
+    "lat": 40.7602784,
+    "lng": -73.9175739
+  },
+  {
+    "name": "William Jane",
+    "street": "119 E State St",
+    "city": "Ithaca",
+    "state": "NY",
+    "zip": "14850",
+    "lat": 42.4393027,
+    "lng": -76.49798489999999
+  }
+]

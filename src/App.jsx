@@ -211,6 +211,66 @@ const FONTS = {
 };
 
 // --- Component: App --------------------------------------------------------
+// --- Nearest Retailers component ---
+function NearestRetailers() {
+  const [stores, setStores] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch("/api/retailers").then(r => r.json()).then(retailers => {
+      // Try geolocation for distance sorting
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            const { latitude, longitude } = pos.coords;
+            const withDist = retailers.map(s => ({
+              ...s,
+              dist: Math.sqrt((s.lat - latitude) ** 2 + (s.lng - longitude) ** 2) * 69 // rough miles
+            })).sort((a, b) => a.dist - b.dist);
+            setStores(withDist.slice(0, 5));
+            setLoading(false);
+          },
+          () => { setStores(retailers.slice(0, 5)); setLoading(false); },
+          { timeout: 3000 }
+        );
+      } else {
+        setStores(retailers.slice(0, 5));
+        setLoading(false);
+      }
+    }).catch(() => setLoading(false));
+  }, []);
+
+  if (loading) return <div style={{ color: "#888", fontSize: 12, textAlign: "center", padding: 16 }}>Finding nearby stores...</div>;
+  if (!stores.length) return <div style={{ color: "#888", fontSize: 12, textAlign: "center", padding: 16 }}>No retailers found</div>;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {stores.map((s, i) => (
+        <a key={i} href={`https://maps.google.com/?q=${encodeURIComponent(s.street + " " + s.city + " " + s.state + " " + s.zip)}`}
+          target="_blank" rel="noopener noreferrer"
+          style={{ display: "flex", alignItems: "center", gap: 12, background: "#141414", borderRadius: 10, padding: "12px 14px",
+            border: "1px solid rgba(255,255,255,0.08)", textDecoration: "none", color: "#fff" }}>
+          <div style={{ width: 32, height: 32, borderRadius: 8, background: "rgba(200,255,0,0.1)", display: "flex", alignItems: "center",
+            justifyContent: "center", fontSize: 16, flexShrink: 0 }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#c8ff00" strokeWidth="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: "#c8ff00" }}>{s.name}</div>
+            <div style={{ fontSize: 11, color: "#888", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              {s.street}, {s.city}, {s.state} {s.zip}
+            </div>
+          </div>
+          {s.dist !== undefined && <div style={{ fontSize: 11, color: "#555", flexShrink: 0 }}>{s.dist.toFixed(1)} mi</div>}
+        </a>
+      ))}
+      <a href="https://dragonflybrandny.com/#Map" target="_blank" rel="noopener noreferrer"
+        style={{ textAlign: "center", color: "#c8ff00", fontSize: 12, textDecoration: "none", marginTop: 4 }}>
+        View all {'>'}
+      </a>
+    </div>
+  );
+}
+
 export default function DragonflyScanner() {
   const [screen, setScreen] = useState("home"); // home | scan | result | signup | thanks
   const [scannedStrain, setScannedStrain] = useState(null);
@@ -365,13 +425,19 @@ export default function DragonflyScanner() {
       const aiProductType = (result.product_type || "").toUpperCase();
       const aiThc = result.thc || null;
       const aiConfidence = result.confidence || "low";
+      const aiBrand = (result.brand || "").toLowerCase();
+      const aiAllText = result.all_text || "";
 
-      console.log("Claude Vision response:", aiStrain, aiProductType, aiThc, aiConfidence);
+      console.log("OCR result:", { aiStrain, aiProductType, aiThc, aiBrand, aiAllText });
 
       setScanProgress(90);
 
+      // Check if this is a Dragonfly product
+      const isDragonfly = aiBrand.includes("dragonfly") || aiAllText?.toLowerCase().includes("dragonfly") || aiBrand === "";
+      // If brand is clearly something else (not empty, not dragonfly), it's not ours
+      const isOtherBrand = aiBrand && !aiBrand.includes("dragonfly") && aiBrand !== "unknown";
+
       // Match the AI response against our strain database
-      // Use product_type to disambiguate when multiple entries share a strain name
       let matched = null;
 
       // Category mapping from label text to STRAIN_DB category values
@@ -451,11 +517,10 @@ export default function DragonflyScanner() {
 
       setScanProgress(100);
 
-      if (matched) {
+      if (matched && !isOtherBrand) {
         const cat = STRAIN_DB[matched]?.category || "";
         setScanStatus(`Identified: ${matched} (${cat})`);
-        // Store label data so we can show label THC% instead of DB estimate
-        setLabelRead({ strain: aiStrain, product_type: aiProductType, thc: aiThc, confidence: aiConfidence });
+        setLabelRead({ strain: aiStrain, product_type: aiProductType, thc: aiThc, confidence: aiConfidence, isDragonfly: true });
         setTimeout(() => {
           setScanning(false);
           setScanStatus("");
@@ -463,18 +528,29 @@ export default function DragonflyScanner() {
           stopCamera();
           setScreen("result");
         }, 800);
-      } else if (aiStrain !== "UNKNOWN") {
-        // Not in DB but we read something from the label -- show what we found
-        setScanStatus(`Read from label: "${aiStrain}" (${aiProductType}) -- not in database. Showing estimate.`);
-        // Create a temporary display entry
+      } else if (isOtherBrand || (aiStrain !== "UNKNOWN" && !matched)) {
+        // Not a Dragonfly product OR Dragonfly strain not in DB
+        const labelInfo = {
+          strain: aiStrain, product_type: aiProductType, thc: aiThc,
+          confidence: aiConfidence, brand: aiBrand, all_text: aiAllText,
+          isDragonfly: !isOtherBrand,
+        };
+        // Find closest comparable Dragonfly product
+        if (isOtherBrand && aiStrain !== "UNKNOWN") {
+          const comparable = fuzzyMatch(aiStrain, strainNames);
+          if (comparable) labelInfo.suggestedDragonfly = comparable;
+        }
+        setScanStatus(isOtherBrand
+          ? `This is a ${aiBrand} product, not Dragonfly. Finding comparable...`
+          : `"${aiStrain}" (${aiProductType}) -- not in database.`);
         setScannedStrain(null);
-        setLabelRead({ strain: aiStrain, product_type: aiProductType, thc: aiThc, confidence: aiConfidence });
+        setLabelRead(labelInfo);
         setTimeout(() => {
           setScanning(false);
           setScanStatus("");
           stopCamera();
           setScreen("result");
-        }, 1500);
+        }, 1200);
       } else {
         setScanStatus("Couldn't read label. Try a clearer photo or search manually.");
         setTimeout(() => {
@@ -1426,43 +1502,73 @@ export default function DragonflyScanner() {
                 <img src={scannedImage} alt="Scanned product" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
               </div>
             )}
-            <div style={{ ...styles.typeBadge(COLORS.textMuted), background: "rgba(255,255,255,0.08)", color: COLORS.textMuted }}>NOT IN DATABASE</div>
+            {labelRead.isDragonfly === false ? (
+              <div style={{ ...styles.typeBadge(COLORS.error), background: "rgba(239,68,68,0.12)" }}>NOT A DRAGONFLY PRODUCT</div>
+            ) : (
+              <div style={{ ...styles.typeBadge(COLORS.textMuted), background: "rgba(255,255,255,0.08)", color: COLORS.textMuted }}>NOT IN DATABASE</div>
+            )}
             <h1 style={styles.strainName}>{labelRead.strain}</h1>
             <div style={styles.strainCategory}>
+              {labelRead.brand && labelRead.brand !== "unknown" ? labelRead.brand.toUpperCase() + " - " : ""}
               {labelRead.product_type !== "UNKNOWN" ? labelRead.product_type : "Product"} {labelRead.thc ? `- THC ${labelRead.thc}` : ""}
             </div>
           </div>
 
-          <div style={styles.infoSection}>
-            <div style={styles.sectionTitle}>Label Read (Estimated)</div>
-            <div style={{ background: COLORS.bgCard, borderRadius: 12, padding: 16, border: `1px solid ${COLORS.border}` }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <div>
-                  <div style={{ fontSize: 11, color: COLORS.textDim, letterSpacing: "0.1em", marginBottom: 4 }}>STRAIN</div>
-                  <div style={{ fontSize: 15, color: COLORS.text }}>{labelRead.strain}</div>
-                </div>
-                <div>
-                  <div style={{ fontSize: 11, color: COLORS.textDim, letterSpacing: "0.1em", marginBottom: 4 }}>PRODUCT TYPE</div>
-                  <div style={{ fontSize: 15, color: COLORS.text }}>{labelRead.product_type}</div>
-                </div>
-                {labelRead.thc && (
+          {/* Suggested Dragonfly comparable */}
+          {labelRead.isDragonfly === false && labelRead.suggestedDragonfly && STRAIN_DB[labelRead.suggestedDragonfly] && (
+            <div style={styles.infoSection}>
+              <div style={styles.sectionTitle}>Try Dragonfly Instead</div>
+              <div style={{ background: COLORS.bgCard, borderRadius: 12, padding: 16, border: `1px solid ${COLORS.accentDim}`, cursor: "pointer" }}
+                onClick={() => { setScannedStrain(labelRead.suggestedDragonfly); setLabelRead(null); }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  {STRAIN_DB[labelRead.suggestedDragonfly].image && (
+                    <img src={STRAIN_DB[labelRead.suggestedDragonfly].image} alt="" style={{ width: 60, height: 60, borderRadius: 8, objectFit: "cover" }} onError={(e) => { e.target.style.display = "none"; }} />
+                  )}
                   <div>
-                    <div style={{ fontSize: 11, color: COLORS.textDim, letterSpacing: "0.1em", marginBottom: 4 }}>THC</div>
-                    <div style={{ fontSize: 15, color: COLORS.text }}>{labelRead.thc}</div>
+                    <div style={{ color: COLORS.accent, fontSize: 16, fontWeight: 600 }}>{labelRead.suggestedDragonfly}</div>
+                    <div style={{ color: COLORS.textMuted, fontSize: 12 }}>{STRAIN_DB[labelRead.suggestedDragonfly].category} - {STRAIN_DB[labelRead.suggestedDragonfly].type}</div>
+                    <div style={{ color: COLORS.textDim, fontSize: 11, marginTop: 4 }}>Tap to view details</div>
                   </div>
-                )}
-                <div>
-                  <div style={{ fontSize: 11, color: COLORS.textDim, letterSpacing: "0.1em", marginBottom: 4 }}>CONFIDENCE</div>
-                  <div style={{ fontSize: 15, color: labelRead.confidence === "high" ? COLORS.success : labelRead.confidence === "medium" ? COLORS.accent : COLORS.error }}>{labelRead.confidence}</div>
-                </div>
-              </div>
-              <div style={{ marginTop: 16, padding: "12px 16px", background: "rgba(200,255,0,0.06)", borderRadius: 8, border: `1px solid ${COLORS.accentDim}` }}>
-                <div style={{ fontSize: 12, color: COLORS.textMuted, lineHeight: 1.6 }}>
-                  This strain was read directly from the label but is not yet in our database. The information shown is an estimate based on OCR.
                 </div>
               </div>
             </div>
-          </div>
+          )}
+
+          {/* Nearest retailers */}
+          {labelRead.isDragonfly === false && (
+            <div style={styles.infoSection}>
+              <div style={styles.sectionTitle}>Find Dragonfly Near You</div>
+              <NearestRetailers />
+            </div>
+          )}
+
+          {/* Label details for Dragonfly products not in DB */}
+          {labelRead.isDragonfly !== false && (
+            <div style={styles.infoSection}>
+              <div style={styles.sectionTitle}>Label Read</div>
+              <div style={{ background: COLORS.bgCard, borderRadius: 12, padding: 16, border: `1px solid ${COLORS.border}` }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                  <div>
+                    <div style={{ fontSize: 11, color: COLORS.textDim, letterSpacing: "0.1em", marginBottom: 4 }}>STRAIN</div>
+                    <div style={{ fontSize: 15, color: COLORS.text }}>{labelRead.strain}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: COLORS.textDim, letterSpacing: "0.1em", marginBottom: 4 }}>PRODUCT</div>
+                    <div style={{ fontSize: 15, color: COLORS.text }}>{labelRead.product_type}</div>
+                  </div>
+                  {labelRead.thc && (
+                    <div>
+                      <div style={{ fontSize: 11, color: COLORS.textDim, letterSpacing: "0.1em", marginBottom: 4 }}>THC</div>
+                      <div style={{ fontSize: 15, color: COLORS.text }}>{labelRead.thc}</div>
+                    </div>
+                  )}
+                </div>
+                <div style={{ marginTop: 12, fontSize: 12, color: COLORS.textDim, lineHeight: 1.6 }}>
+                  This product was read from the label but is not yet in our database.
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       );
     }
