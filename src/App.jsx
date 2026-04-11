@@ -494,8 +494,19 @@ export default function DragonflyScanner() {
               matched = fuzzyMatch(aiStrain, categoryStrains);
             }
           }
-          // If still no match with correct category, this strain+category combo isn't in DB
-          // Let it fall through to labelRead (don't match wrong category)
+          // If it's a confirmed Dragonfly product but not in the right category,
+          // fall back to ANY category match -- better to show a different format
+          // of the same strain than to say "not in database" for our own product
+          if (!matched && isDragonfly) {
+            // Exact name any category
+            for (const name of strainNames) {
+              if (name.toLowerCase() === aiLower) { matched = name; break; }
+            }
+            // Fuzzy name any category
+            if (!matched) {
+              matched = fuzzyMatch(aiStrain, strainNames);
+            }
+          }
         } else {
           // No category info from label -- match any category
           if (STRAIN_DB[aiStrain]) {
