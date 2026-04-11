@@ -101,22 +101,35 @@ app.post("/api/scan", async (req, res) => {
             },
             {
               type: "text",
-              text: `You are a cannabis product identifier for the Dragonfly brand.
+              text: `You are a cannabis product identifier for the Dragonfly brand. Read ALL text on the label carefully using OCR.
 
-PACKAGING DETAILS: Dragonfly products have a distinctive red tube/container with GOLD text for the brand name "DRAGONFLY" and product type (e.g. "PREROLL"), and BLACK text for the strain name, THC percentage, and other details. There is typically a gold dragonfly logo/emblem at the top. The strain name is usually the most prominent BLACK text on the red background, located below the word "PREROLL" or product type.
+PACKAGING DETAILS: Dragonfly products have a distinctive red tube/container with GOLD text for the brand name "DRAGONFLY" and product type (e.g. "PREROLL", "FLOWER", "VAPE", "INFUSED PREROLL", "14 PACK"), and BLACK text for the strain name, THC percentage, and other details. There is typically a gold dragonfly logo/emblem at the top.
 
-Product types include: prerolls (1g joints), flower jars, vape cartridges, all-in-one vapes, 14-packs, premium ounces, and gummies.
+Product categories and how they appear on labels:
+- "PREROLL" or "PRE-ROLL" = Preroll 1g
+- "INFUSED" or "INFUSED PREROLL" = Infused Preroll 1.25g
+- "FLOWER" = Flower 3.5g
+- "1 OZ" or "PREMIUM OUNCE" or "28g" = 1oz Premium Flower
+- "VAPE" or "CART" or "CARTRIDGE" or "ALL-IN-ONE" or "AIO" = Vape
+- "14 PACK" or "14-PACK" = 14 Pack Prerolls
+- "GUMMY" or "GUMMIES" or "EDIBLE" = Gummies
 
-The complete list of Dragonfly strain names is: ${strain_list}
+The complete list of known Dragonfly strain names is: ${strain_list}
 
-TASK: Look at this product photo and identify the strain name. Read the BLACK text on the red packaging carefully -- that's where the strain name is.
+TASK: Look at this product photo and:
+1. Read the PRODUCT TYPE from the GOLD text (e.g. PREROLL, FLOWER, VAPE, etc.)
+2. Read the STRAIN NAME from the BLACK text below the product type
+3. Read the THC percentage if visible
+
+Respond with ONLY valid JSON, no other text:
+{"strain": "exact strain name you read", "product_type": "what product type text you see", "thc": "THC % if visible or null", "confidence": "high/medium/low"}
 
 Rules:
-- The strain name appears in BLACK TEXT below the product type on the RED packaging
-- If you can identify the strain, respond with ONLY the exact strain name from the list above
-- If you see a strain name that's close but not an exact match in the list, still respond with what you read -- we'll match it
-- If you truly cannot identify any strain from the image, respond with exactly: UNKNOWN
-- Respond with ONLY the strain name -- no explanation, no extra words`
+- Read the actual text on the label -- do not guess
+- "strain" should be the strain name exactly as printed, matched to the known list if possible
+- "product_type" should be the product category text you see on the label (PREROLL, FLOWER, VAPE, etc.)
+- If the strain is not in the known list, still report what you read -- include the raw text
+- If you cannot read the label at all, respond: {"strain": "UNKNOWN", "product_type": "UNKNOWN", "thc": null, "confidence": "low"}`
             }
           ]
         }]
@@ -130,16 +143,41 @@ Rules:
     }
 
     const result = await response.json();
-    const strain = result.content?.[0]?.text?.trim() || "UNKNOWN";
-    console.log(`Vision scan result: "${strain}"`);
+    const rawText = result.content?.[0]?.text?.trim() || "";
+    console.log(`Vision raw response: "${rawText}"`);
+
+    // Parse JSON response from Claude
+    let strain = "UNKNOWN";
+    let product_type = "UNKNOWN";
+    let thc = null;
+    let confidence = "low";
+    let raw_ocr = rawText;
+
+    try {
+      let jsonStr = rawText;
+      if (jsonStr.startsWith("```")) {
+        jsonStr = jsonStr.split("\n").slice(1).join("\n").replace(/```\s*$/, "").trim();
+      }
+      const parsed = JSON.parse(jsonStr);
+      strain = parsed.strain || "UNKNOWN";
+      product_type = parsed.product_type || "UNKNOWN";
+      thc = parsed.thc || null;
+      confidence = parsed.confidence || "medium";
+      raw_ocr = null;
+    } catch (e) {
+      // If Claude didn't return JSON, treat raw text as strain name (backward compat)
+      strain = rawText.replace(/["\n]/g, "").trim() || "UNKNOWN";
+    }
+
+    console.log(`Vision scan: strain="${strain}", product_type="${product_type}", thc="${thc}"`);
 
     // Track scan
     scanCount++;
-    recentScans.unshift({ strain, timestamp: new Date().toISOString() });
+    recentScans.unshift({ strain, product_type, timestamp: new Date().toISOString() });
     if (recentScans.length > 50) recentScans.length = 50;
-    logActivity("scan", `Scanned: ${strain}`);
+    logActivity("scan", `Scanned: ${strain} (${product_type})`);
 
-    res.json({ strain });
+    res.json({ strain, product_type, thc, confidence, raw_ocr });
   } catch (err) {
     console.error("Vision proxy error:", err.message);
     res.status(500).json({ error: "Vision scan failed: " + err.message });

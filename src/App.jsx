@@ -214,6 +214,7 @@ const FONTS = {
 export default function DragonflyScanner() {
   const [screen, setScreen] = useState("home"); // home | scan | result | signup | thanks
   const [scannedStrain, setScannedStrain] = useState(null);
+  const [labelRead, setLabelRead] = useState(null); // for strains not in DB
   const [searchQuery, setSearchQuery] = useState("");
   const [showSearch, setShowSearch] = useState(false);
   const [signupData, setSignupData] = useState({ name: "", email: "", phone: "", age: false });
@@ -361,35 +362,78 @@ export default function DragonflyScanner() {
       }
       
       const result = await response.json();
-      const aiResponse = result.strain || "UNKNOWN";
-      
-      console.log("Claude Vision response:", aiResponse);
-      
+      const aiStrain = result.strain || "UNKNOWN";
+      const aiProductType = (result.product_type || "").toUpperCase();
+      const aiThc = result.thc || null;
+      const aiConfidence = result.confidence || "low";
+
+      console.log("Claude Vision response:", aiStrain, aiProductType, aiThc, aiConfidence);
+
       setScanProgress(90);
-      
+
       // Match the AI response against our strain database
+      // Use product_type to disambiguate when multiple entries share a strain name
       let matched = null;
-      
-      // Exact match
-      if (STRAIN_DB[aiResponse]) {
-        matched = aiResponse;
-      } else if (aiResponse !== "UNKNOWN") {
-        // Fuzzy match the AI's response against strain names
-        const aiLower = aiResponse.toLowerCase();
-        for (const name of strainNames) {
-          if (name.toLowerCase() === aiLower) { matched = name; break; }
-          if (aiLower.includes(name.toLowerCase()) || name.toLowerCase().includes(aiLower)) { matched = name; break; }
+
+      // Category mapping from label text to STRAIN_DB category values
+      const categoryMap = {
+        "PREROLL": "Preroll 1g", "PRE-ROLL": "Preroll 1g", "PRE ROLL": "Preroll 1g",
+        "INFUSED": "Infused Preroll 1.25g", "INFUSED PREROLL": "Infused Preroll 1.25g",
+        "FLOWER": "Flower 3.5g",
+        "1 OZ": "1oz Premium Flower", "PREMIUM OUNCE": "1oz Premium Flower", "28G": "1oz Premium Flower",
+        "VAPE": "Vape", "CART": "Vape", "CARTRIDGE": "Vape", "ALL-IN-ONE": "Vape", "AIO": "Vape",
+        "14 PACK": "14 Pack Prerolls", "14-PACK": "14 Pack Prerolls",
+        "GUMMY": "Gummies", "GUMMIES": "Gummies", "EDIBLE": "Gummies",
+      };
+
+      const expectedCategory = categoryMap[aiProductType] || null;
+
+      // Try exact strain match with category disambiguation
+      if (aiStrain !== "UNKNOWN") {
+        // First: try exact name + matching category
+        if (expectedCategory) {
+          for (const name of strainNames) {
+            if (name.toLowerCase() === aiStrain.toLowerCase() && STRAIN_DB[name]?.category === expectedCategory) {
+              matched = name;
+              break;
+            }
+          }
         }
-        // If still no match, try edit distance
+        // Second: try exact name (any category)
+        if (!matched && STRAIN_DB[aiStrain]) {
+          matched = aiStrain;
+        }
+        // Third: fuzzy match with category preference
         if (!matched) {
-          matched = fuzzyMatch(aiResponse, strainNames);
+          const aiLower = aiStrain.toLowerCase();
+          // Case-insensitive exact
+          for (const name of strainNames) {
+            if (name.toLowerCase() === aiLower) {
+              if (!expectedCategory || STRAIN_DB[name]?.category === expectedCategory) { matched = name; break; }
+              if (!matched) matched = name; // fallback without category match
+            }
+          }
+          // Substring match
+          if (!matched) {
+            for (const name of strainNames) {
+              if (aiLower.includes(name.toLowerCase()) || name.toLowerCase().includes(aiLower)) {
+                if (!expectedCategory || STRAIN_DB[name]?.category === expectedCategory) { matched = name; break; }
+                if (!matched) matched = name;
+              }
+            }
+          }
+          // Edit distance
+          if (!matched) {
+            matched = fuzzyMatch(aiStrain, strainNames);
+          }
         }
       }
-      
+
       setScanProgress(100);
-      
+
       if (matched) {
-        setScanStatus(`Identified: ${matched}`);
+        const cat = STRAIN_DB[matched]?.category || "";
+        setScanStatus(`Identified: ${matched} (${cat})`);
         setTimeout(() => {
           setScanning(false);
           setScanStatus("");
@@ -397,8 +441,20 @@ export default function DragonflyScanner() {
           stopCamera();
           setScreen("result");
         }, 800);
+      } else if (aiStrain !== "UNKNOWN") {
+        // Not in DB but we read something from the label -- show what we found
+        setScanStatus(`Read from label: "${aiStrain}" (${aiProductType}) -- not in database. Showing estimate.`);
+        // Create a temporary display entry
+        setScannedStrain(null);
+        setLabelRead({ strain: aiStrain, product_type: aiProductType, thc: aiThc, confidence: aiConfidence });
+        setTimeout(() => {
+          setScanning(false);
+          setScanStatus("");
+          stopCamera();
+          setScreen("result");
+        }, 1500);
       } else {
-        setScanStatus("Couldn't identify strain. Try a clearer photo or search manually.");
+        setScanStatus("Couldn't read label. Try a clearer photo or search manually.");
         setTimeout(() => {
           setScanning(false);
           setScanProgress(0);
@@ -439,6 +495,7 @@ export default function DragonflyScanner() {
     stopCamera();
     setScreen("home");
     setScannedStrain(null);
+    setLabelRead(null);
     setSearchQuery("");
     setShowSearch(false);
     setScanning(false);
@@ -1329,6 +1386,59 @@ export default function DragonflyScanner() {
 
   // --- Render: Result ------------------------------------------------------
   const renderResult = () => {
+    // Handle label-read strains not in DB
+    if (!scannedStrain && labelRead) {
+      return (
+        <div style={styles.resultContainer}>
+          <button style={{ ...styles.backBtn, marginTop: 16 }} onClick={goHome}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M19 12H5" /><path d="m12 19-7-7 7-7" />
+            </svg>
+            Scan Another
+          </button>
+
+          <div style={styles.strainHeader}>
+            <div style={{ ...styles.typeBadge(COLORS.textMuted), background: "rgba(255,255,255,0.08)", color: COLORS.textMuted }}>NOT IN DATABASE</div>
+            <h1 style={styles.strainName}>{labelRead.strain}</h1>
+            <div style={styles.strainCategory}>
+              {labelRead.product_type !== "UNKNOWN" ? labelRead.product_type : "Product"} {labelRead.thc ? `- THC ${labelRead.thc}` : ""}
+            </div>
+          </div>
+
+          <div style={styles.infoSection}>
+            <div style={styles.sectionTitle}>Label Read (Estimated)</div>
+            <div style={{ background: COLORS.bgCard, borderRadius: 12, padding: 16, border: `1px solid ${COLORS.border}` }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div>
+                  <div style={{ fontSize: 11, color: COLORS.textDim, letterSpacing: "0.1em", marginBottom: 4 }}>STRAIN</div>
+                  <div style={{ fontSize: 15, color: COLORS.text }}>{labelRead.strain}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, color: COLORS.textDim, letterSpacing: "0.1em", marginBottom: 4 }}>PRODUCT TYPE</div>
+                  <div style={{ fontSize: 15, color: COLORS.text }}>{labelRead.product_type}</div>
+                </div>
+                {labelRead.thc && (
+                  <div>
+                    <div style={{ fontSize: 11, color: COLORS.textDim, letterSpacing: "0.1em", marginBottom: 4 }}>THC</div>
+                    <div style={{ fontSize: 15, color: COLORS.text }}>{labelRead.thc}</div>
+                  </div>
+                )}
+                <div>
+                  <div style={{ fontSize: 11, color: COLORS.textDim, letterSpacing: "0.1em", marginBottom: 4 }}>CONFIDENCE</div>
+                  <div style={{ fontSize: 15, color: labelRead.confidence === "high" ? COLORS.success : labelRead.confidence === "medium" ? COLORS.accent : COLORS.error }}>{labelRead.confidence}</div>
+                </div>
+              </div>
+              <div style={{ marginTop: 16, padding: "12px 16px", background: "rgba(200,255,0,0.06)", borderRadius: 8, border: `1px solid ${COLORS.accentDim}` }}>
+                <div style={{ fontSize: 12, color: COLORS.textMuted, lineHeight: 1.6 }}>
+                  This strain was read directly from the label but is not yet in our database. The information shown is an estimate based on OCR.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     if (!scannedStrain || !STRAIN_DB[scannedStrain]) return null;
     const s = STRAIN_DB[scannedStrain];
     const tc = typeColor(s.type);
