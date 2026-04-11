@@ -12,7 +12,7 @@ app.use(express.json({ limit: "10mb" }));
 // Serve static frontend build in production
 app.use(express.static(path.join(__dirname, "dist")));
 
-// ─── Claude Vision API Proxy ──────────────────────────────────────────────
+// --- Claude Vision API Proxy ----------------------------------------------
 // Keeps the Anthropic API key server-side. Frontend POSTs image to /api/scan,
 // server forwards to Claude, returns the strain name.
 // Set ANTHROPIC_API_KEY as a Railway environment variable.
@@ -29,15 +29,64 @@ app.post("/api/scan", async (req, res) => {
   }
 
   try {
-    const response = await fetch("https://api.anthropic.com/v1/messages", {rain: "${strain}", product: "${productType}"`);
-    res.json({ strain, product_type: productType });
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 200,
+        messages: [{
+          role: "user",
+          content: [
+            {
+              type: "image",
+              source: { type: "base64", media_type: media_type || "image/jpeg", data: image_base64 }
+            },
+            {
+              type: "text",
+              text: `You are a cannabis product identifier for the Dragonfly brand.
+
+PACKAGING DETAILS: Dragonfly products have a distinctive red tube/container with GOLD text for the brand name "DRAGONFLY" and product type (e.g. "PREROLL"), and BLACK text for the strain name, THC percentage, and other details. There is typically a gold dragonfly logo/emblem at the top. The strain name is usually the most prominent BLACK text on the red background, located below the word "PREROLL" or product type.
+
+Product types include: prerolls (1g joints), flower jars, vape cartridges, all-in-one vapes, 14-packs, premium ounces, and gummies.
+
+The complete list of Dragonfly strain names is: ${strain_list}
+
+TASK: Look at this product photo and identify the strain name. Read the BLACK text on the red packaging carefully -- that's where the strain name is.
+
+Rules:
+- The strain name appears in BLACK TEXT below the product type on the RED packaging
+- If you can identify the strain, respond with ONLY the exact strain name from the list above
+- If you see a strain name that's close but not an exact match in the list, still respond with what you read -- we'll match it
+- If you truly cannot identify any strain from the image, respond with exactly: UNKNOWN
+- Respond with ONLY the strain name -- no explanation, no extra words`
+            }
+          ]
+        }]
+      })
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error("Anthropic API error:", response.status, errText);
+      return res.status(502).json({ error: "Vision API request failed", status: response.status });
+    }
+
+    const result = await response.json();
+    const strain = result.content?.[0]?.text?.trim() || "UNKNOWN";
+    console.log(`Vision scan result: "${strain}"`);
+    res.json({ strain });
   } catch (err) {
     console.error("Vision proxy error:", err.message);
     res.status(500).json({ error: "Vision scan failed: " + err.message });
   }
 });
 
-// ─── Email Configuration ───────────────────────────────────────────────────
+// --- Email Configuration ---------------------------------------------------
 // Set these as Railway environment variables:
 //   SMTP_HOST=smtp.gmail.com (or your provider)
 //   SMTP_PORT=587
@@ -59,10 +108,10 @@ const transporter = nodemailer.createTransport({
 const NOTIFY_EMAIL = process.env.NOTIFY_EMAIL || "sasha@dopestr.com";
 const FROM_EMAIL = process.env.FROM_EMAIL || "noreply@dragonflybrandny.com";
 
-// ─── In-memory signup log (persists until server restart) ──────────────────
+// --- In-memory signup log (persists until server restart) ------------------
 const signups = [];
 
-// ─── Signup Endpoint ───────────────────────────────────────────────────────
+// --- Signup Endpoint -------------------------------------------------------
 app.post("/api/signup", async (req, res) => {
   const { name, email, phone, strain } = req.body;
 
@@ -119,15 +168,15 @@ app.post("/api/signup", async (req, res) => {
           </table>
         </div>
         <div style="text-align: center; color: #555; font-size: 11px; margin-top: 16px;">
-          Dragonfly Product Scanner · Signup #${signups.length}
+          Dragonfly Product Scanner - Signup #${signups.length}
         </div>
       </div>
     </div>
   `;
 
   const textBody = `
-DRAGONFLY — New Scanner Signup
-──────────────────────────────
+DRAGONFLY -- New Scanner Signup
+-------------------------------
 Name:    ${name}
 Email:   ${email}
 Phone:   ${phone || "Not provided"}
@@ -142,48 +191,48 @@ Signup #${signups.length}
       await transporter.sendMail({
         from: `"Dragonfly Scanner" <${FROM_EMAIL}>`,
         to: NOTIFY_EMAIL,
-        subject: `🐉 New Signup: ${name} — Dragonfly Scanner`,
+        subject: `New Signup: ${name} -- Dragonfly Scanner`,
         text: textBody,
         html: htmlBody,
       });
-      console.log(`✅ Email sent to ${NOTIFY_EMAIL} for signup: ${name} <${email}>`);
+      console.log(`Email sent to ${NOTIFY_EMAIL} for signup: ${name} <${email}>`);
     } else {
-      console.log(`⚠️  SMTP not configured — signup logged but email not sent.`);
-      console.log(`    To enable emails, set SMTP_USER and SMTP_PASS env vars.`);
+      console.log(`SMTP not configured -- signup logged but email not sent.`);
+      console.log(`  To enable emails, set SMTP_USER and SMTP_PASS env vars.`);
     }
 
     // Always log to console as backup
-    console.log(`📝 Signup #${signups.length}: ${name} | ${email} | ${phone || "no phone"} | Strain: ${strain || "none"} | ${timestamp}`);
+    console.log(`Signup #${signups.length}: ${name} | ${email} | ${phone || "no phone"} | Strain: ${strain || "none"} | ${timestamp}`);
 
     return res.json({
       success: true,
       message: "Signup received! You'll hear from us soon.",
     });
   } catch (err) {
-    console.error("❌ Email send error:", err.message);
+    console.error("Email send error:", err.message);
 
     // Still save the signup even if email fails
-    console.log(`📝 Signup #${signups.length} (email failed): ${name} | ${email} | ${phone || "no phone"}`);
+    console.log(`Signup #${signups.length} (email failed): ${name} | ${email} | ${phone || "no phone"}`);
 
     return res.json({
       success: true,
       message: "Signup received! You'll hear from us soon.",
-      emailWarning: "Notification email could not be sent — signup was still recorded.",
+      emailWarning: "Notification email could not be sent -- signup was still recorded.",
     });
   }
 });
 
-// ─── View all signups (internal/admin) ─────────────────────────────────────
+// --- View all signups (internal/admin) -------------------------------------
 app.get("/api/signups", (req, res) => {
   const key = req.query.key;
-  // Simple auth — set ADMIN_KEY env var on Railway
+  // Simple auth -- set ADMIN_KEY env var on Railway
   if (process.env.ADMIN_KEY && key !== process.env.ADMIN_KEY) {
     return res.status(401).json({ error: "Unauthorized" });
   }
   res.json({ total: signups.length, signups });
 });
 
-// ─── Health check ──────────────────────────────────────────────────────────
+// --- Health check ----------------------------------------------------------
 app.get("/api/health", (req, res) => {
   res.json({
     status: "ok",
@@ -193,14 +242,14 @@ app.get("/api/health", (req, res) => {
   });
 });
 
-// ─── SPA fallback ──────────────────────────────────────────────────────────
+// --- SPA fallback ----------------------------------------------------------
 app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "dist", "index.html"));
 });
 
 app.listen(PORT, () => {
-  console.log(`\n🐉 Dragonfly Scanner API running on port ${PORT}`);
-  console.log(`   Notifications → ${NOTIFY_EMAIL}`);
-  console.log(`   SMTP configured: ${!!(process.env.SMTP_USER && process.env.SMTP_PASS)}`);
-  console.log(`   Admin signups:   /api/signups${process.env.ADMIN_KEY ? "?key=***" : ""}\n`);
+  console.log(`\nDragonfly Scanner API running on port ${PORT}`);
+  console.log(`  Notifications -> ${NOTIFY_EMAIL}`);
+  console.log(`  SMTP configured: ${!!(process.env.SMTP_USER && process.env.SMTP_PASS)}`);
+  console.log(`  Admin signups:   /api/signups${process.env.ADMIN_KEY ? "?key=***" : ""}\n`);
 });
