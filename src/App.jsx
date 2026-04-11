@@ -215,6 +215,7 @@ export default function DragonflyScanner() {
   const [screen, setScreen] = useState("home"); // home | scan | result | signup | thanks
   const [scannedStrain, setScannedStrain] = useState(null);
   const [labelRead, setLabelRead] = useState(null); // for strains not in DB
+  const [scannedImage, setScannedImage] = useState(null); // captured photo for display
   const [searchQuery, setSearchQuery] = useState("");
   const [showSearch, setShowSearch] = useState(false);
   const [signupData, setSignupData] = useState({ name: "", email: "", phone: "", age: false });
@@ -337,6 +338,7 @@ export default function DragonflyScanner() {
       const resized = await resizeImage(imageSrc);
       const base64 = resized.split(",")[1];
       const mediaType = resized.startsWith("data:image/png") ? "image/png" : "image/jpeg";
+      setScannedImage(resized); // store for display in results
 
       setScanProgress(30);
       setScanStatus("AI analyzing product...");
@@ -455,6 +457,8 @@ export default function DragonflyScanner() {
       if (matched) {
         const cat = STRAIN_DB[matched]?.category || "";
         setScanStatus(`Identified: ${matched} (${cat})`);
+        // Store label data so we can show label THC% instead of DB estimate
+        setLabelRead({ strain: aiStrain, product_type: aiProductType, thc: aiThc, confidence: aiConfidence });
         setTimeout(() => {
           setScanning(false);
           setScanStatus("");
@@ -517,6 +521,7 @@ export default function DragonflyScanner() {
     setScreen("home");
     setScannedStrain(null);
     setLabelRead(null);
+    setScannedImage(null);
     setSearchQuery("");
     setShowSearch(false);
     setScanning(false);
@@ -1419,6 +1424,11 @@ export default function DragonflyScanner() {
           </button>
 
           <div style={styles.strainHeader}>
+            {scannedImage && (
+              <div style={{ width: 120, height: 120, margin: "0 auto 12px", borderRadius: 12, overflow: "hidden", background: COLORS.bgCard, border: `1px solid ${COLORS.borderLight}` }}>
+                <img src={scannedImage} alt="Scanned product" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              </div>
+            )}
             <div style={{ ...styles.typeBadge(COLORS.textMuted), background: "rgba(255,255,255,0.08)", color: COLORS.textMuted }}>NOT IN DATABASE</div>
             <h1 style={styles.strainName}>{labelRead.strain}</h1>
             <div style={styles.strainCategory}>
@@ -1481,7 +1491,7 @@ export default function DragonflyScanner() {
           )}
           <div style={styles.typeBadge(tc)}>{s.type}</div>
           <h1 style={styles.strainName}>{scannedStrain}</h1>
-          <div style={styles.strainCategory}>{s.category} - THC {s.thc}</div>
+          <div style={styles.strainCategory}>{s.category} - THC {labelRead?.thc || s.thc}</div>
         </div>
 
         {/* Quick Stats */}
@@ -1494,7 +1504,7 @@ export default function DragonflyScanner() {
             </div>
             <div style={styles.statItem}>
               <div style={styles.statLabel}>THC</div>
-              <div style={styles.statValue}>{s.thc}</div>
+              <div style={styles.statValue}>{labelRead?.thc || s.thc}</div>
             </div>
             <div style={styles.statItem}>
               <div style={styles.statLabel}>Flavor</div>
