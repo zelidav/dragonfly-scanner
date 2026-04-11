@@ -394,78 +394,188 @@ app.delete("/api/admin/products/:name", requireAdmin, (req, res) => {
 });
 
 // Scrape dragonflybrandny.com
+// Saved scrape sites
+const SCRAPE_SITES_FILE = path.join(DATA_DIR, "scrape-sites.json");
+function loadScrapeSites() {
+  try {
+    if (fs.existsSync(SCRAPE_SITES_FILE)) return JSON.parse(fs.readFileSync(SCRAPE_SITES_FILE, "utf-8"));
+  } catch (e) {}
+  return [{ name: "Dragonfly Collection", url: "https://dragonflybrandny.com/#Our-Collection" }];
+}
+function saveScrapeSites(sites) {
+  try {
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(SCRAPE_SITES_FILE, JSON.stringify(sites, null, 2), "utf-8");
+  } catch (e) {}
+}
+let scrapeSites = loadScrapeSites();
+
+app.get("/api/admin/scrape-sites", requireAdmin, (req, res) => {
+  res.json(scrapeSites);
+});
+
+app.post("/api/admin/scrape-sites", requireAdmin, (req, res) => {
+  const { name, url } = req.body;
+  if (!name || !url) return res.status(400).json({ error: "name and url required" });
+  scrapeSites.push({ name, url });
+  saveScrapeSites(scrapeSites);
+  res.json({ success: true, sites: scrapeSites });
+});
+
+app.delete("/api/admin/scrape-sites/:index", requireAdmin, (req, res) => {
+  const idx = parseInt(req.params.index);
+  if (idx >= 0 && idx < scrapeSites.length) {
+    scrapeSites.splice(idx, 1);
+    saveScrapeSites(scrapeSites);
+  }
+  res.json({ success: true, sites: scrapeSites });
+});
+
 app.post("/api/admin/scrape", requireAdmin, async (req, res) => {
   try {
-    logActivity("scrape", "Scrape initiated");
+    const startUrl = (req.body.url || "https://dragonflybrandny.com/").trim();
+    logActivity("scrape", `Scrape initiated: ${startUrl}`);
 
-    // Fetch the shop page
-    const shopUrl = "https://dragonflybrandny.com/shop/";
-    const response = await fetch(shopUrl, {
-      headers: { "User-Agent": "Mozilla/5.0 (compatible; DragonflyAdmin/1.0)" }
-    });
+    const headers = { "User-Agent": "Mozilla/5.0 (compatible; DragonflyAdmin/1.0)" };
 
+    // Fetch the main page
+    const response = await fetch(startUrl, { headers });
     if (!response.ok) {
-      return res.status(502).json({ error: `Failed to fetch shop page: ${response.status}` });
+      return res.status(502).json({ error: `Failed to fetch page: ${response.status}` });
     }
-
     const html = await response.text();
-    const discovered = [];
 
-    // Strategy 1: Look for WooCommerce product patterns
-    // <a href="https://dragonflybrandny.com/product/PRODUCT-NAME/">
-    const productLinkRegex = /href="(https?:\/\/dragonflybrandny\.com\/product\/([^/"]+)\/?)"[^>]*>/gi;
+    // Extract base domain for link matching
+    const urlObj = new URL(startUrl);
+    const baseDomain = urlObj.hostname;
+
+    const discovered = [];
+    const discoveredImages = [];
     let match;
     const seenSlugs = new Set();
 
-    while ((match = productLinkRegex.exec(html)) !== null) {
+    // --- Find all product/collection links on the page ---
+    const linkRegex = /href="(https?:\/\/[^"]*\/product\/([^/"]+)\/?[^"]*)"/gi;
+    const productUrls = [];
+    while ((match = linkRegex.exec(html)) !== null) {
       const url = match[1];
       const slug = match[2];
       if (seenSlugs.has(slug)) continue;
       seenSlugs.add(slug);
-
-      // Convert slug to name
+      productUrls.push({ url, slug });
       const name = slug.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
-
-      discovered.push({ name, slug, url });
+      discovered.push({ name, slug, url, images: [], price: null, description: "" });
     }
 
-    // Strategy 2: Look for product images
-    // src="...wp-content/uploads/...PRODUCT-IMAGE.webp"
-    const imageRegex = /src="(https?:\/\/dragonflybrandny\.com\/wp-content\/uploads\/[^"]+\.(webp|jpg|png|jpeg))"/gi;
-    const discoveredImages = [];
-    while ((match = imageRegex.exec(html)) !== null) {
-      discoveredImages.push(match[1]);
+    // --- Also find collection/category links to follow ---
+    const collectionRegex = /href="(https?:\/\/[^"]*\/(product-category|shop|collection|category)\/[^"]+)"/gi;
+    const collectionUrls = [];
+    while ((match = collectionRegex.exec(html)) !== null) {
+      collectionUrls.push(match[1]);
     }
 
-    // Strategy 3: Look for product titles in common WooCommerce markup
-    // <h2 class="woocommerce-loop-product__title">PRODUCT NAME</h2>
-    const titleRegex = /<h[23][^>]*class="[^"]*product[^"]*title[^"]*"[^>]*>([^<]+)<\/h[23]>/gi;
+    // --- Extract images from main page ---
+    const imgRegex = /src="(https?:\/\/[^"]+\/wp-content\/uploads\/[^"]+\.(webp|jpg|png|jpeg))"/gi;
+    while ((match = imgRegex.exec(html)) !== null) {
+      if (!discoveredImages.includes(match[1])) discoveredImages.push(match[1]);
+    }
+
+    // --- Extract product names from structured markup ---
+    const titleRegex = /<h[23][^>]*class="[^"]*(?:product|entry|item)[^"]*(?:title|name)[^"]*"[^>]*>([^<]+)<\/h[23]>/gi;
     while ((match = titleRegex.exec(html)) !== null) {
       const name = match[1].trim();
-      const existing = discovered.find(d => d.name.toLowerCase() === name.toLowerCase());
-      if (!existing && name.length > 1) {
-        discovered.push({ name, slug: name.toLowerCase().replace(/\s+/g, "-"), url: null });
+      if (!discovered.find(d => d.name.toLowerCase() === name.toLowerCase()) && name.length > 1) {
+        discovered.push({ name, slug: name.toLowerCase().replace(/\s+/g, "-"), url: null, images: [], price: null, description: "" });
       }
     }
 
-    // Strategy 4: Look for price patterns
+    // --- Also try data attributes and alt text for product names ---
+    const altRegex = /alt="([^"]{3,60})"[^>]*src="[^"]*(?:PRE-|FLW-|INF-|VAPE-|14P-)[^"]*"/gi;
+    while ((match = altRegex.exec(html)) !== null) {
+      const name = match[1].trim();
+      if (!discovered.find(d => d.name.toLowerCase() === name.toLowerCase())) {
+        discovered.push({ name, slug: name.toLowerCase().replace(/\s+/g, "-"), url: null, images: [], price: null, description: "" });
+      }
+    }
+
+    // --- Follow collection pages for more products (limit 3 pages) ---
+    for (const colUrl of collectionUrls.slice(0, 3)) {
+      try {
+        const colResp = await fetch(colUrl, { headers });
+        if (!colResp.ok) continue;
+        const colHtml = await colResp.text();
+
+        const colLinkRegex = /href="(https?:\/\/[^"]*\/product\/([^/"]+)\/?[^"]*)"/gi;
+        while ((match = colLinkRegex.exec(colHtml)) !== null) {
+          const slug = match[2];
+          if (seenSlugs.has(slug)) continue;
+          seenSlugs.add(slug);
+          const name = slug.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+          discovered.push({ name, slug, url: match[1], images: [], price: null, description: "" });
+        }
+
+        // Grab images from collection page too
+        const colImgRegex = /src="(https?:\/\/[^"]+\/wp-content\/uploads\/[^"]+\.(webp|jpg|png|jpeg))"/gi;
+        while ((match = colImgRegex.exec(colHtml)) !== null) {
+          if (!discoveredImages.includes(match[1])) discoveredImages.push(match[1]);
+        }
+      } catch (e) { /* skip failed collection pages */ }
+    }
+
+    // --- Follow individual product pages for details (limit 20, parallel batches of 5) ---
+    const toScrape = discovered.filter(d => d.url).slice(0, 20);
+    for (let i = 0; i < toScrape.length; i += 5) {
+      const batch = toScrape.slice(i, i + 5);
+      await Promise.all(batch.map(async (product) => {
+        try {
+          const pResp = await fetch(product.url, { headers });
+          if (!pResp.ok) return;
+          const pHtml = await pResp.text();
+
+          // Price
+          const priceMatch = pHtml.match(/<span class="[^"]*amount[^"]*">[^$]*\$([\d,.]+)/i);
+          if (priceMatch) product.price = priceMatch[1];
+
+          // Description
+          const descMatch = pHtml.match(/<div[^>]*class="[^"]*(?:description|product-content|entry-content)[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+          if (descMatch) {
+            product.description = descMatch[1].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().substring(0, 300);
+          }
+
+          // Product images
+          const pImgRegex = /src="(https?:\/\/[^"]+\/wp-content\/uploads\/[^"]+\.(webp|jpg|png|jpeg))"/gi;
+          let pMatch;
+          while ((pMatch = pImgRegex.exec(pHtml)) !== null) {
+            if (!product.images.includes(pMatch[1])) product.images.push(pMatch[1]);
+            if (!discoveredImages.includes(pMatch[1])) discoveredImages.push(pMatch[1]);
+          }
+
+          // Category from breadcrumb or markup
+          const catMatch = pHtml.match(/product-category\/([^/"]+)/i);
+          if (catMatch) product.category = catMatch[1].replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+        } catch (e) { /* skip failed product pages */ }
+      }));
+    }
+
+    // --- Extract any prices from main page ---
     const priceRegex = /<span class="[^"]*amount[^"]*">[^<]*?(\$[\d,.]+)/gi;
     const prices = [];
     while ((match = priceRegex.exec(html)) !== null) {
       prices.push(match[1]);
     }
 
-    // Check which are new vs existing
+    // Check new vs existing
     const existingNames = new Set(Object.keys(productsDB.strains || {}).map(n => n.toLowerCase()));
     const results = discovered.map(d => ({
       ...d,
       isNew: !existingNames.has(d.name.toLowerCase()),
     }));
 
-    logActivity("scrape", `Scrape complete: found ${results.length} products, ${results.filter(r => r.isNew).length} new`);
+    logActivity("scrape", `Scrape complete: ${results.length} products (${results.filter(r => r.isNew).length} new) from ${startUrl}`);
 
     res.json({
       success: true,
+      url: startUrl,
       totalFound: results.length,
       newProducts: results.filter(r => r.isNew).length,
       products: results,

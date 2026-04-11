@@ -343,9 +343,30 @@
     <div id="panel-scraper" class="panel">
       <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin-bottom: 20px;">
         <h3 style="font-family: 'Oswald', sans-serif; font-size: 18px; margin-bottom: 8px;">Website Scraper</h3>
-        <p style="color: var(--text-muted); font-size: 14px; margin-bottom: 16px;">Scan dragonflybrandny.com/shop for new products, images, and prices.</p>
-        <button class="btn" id="scrapeBtn" onclick="doScrape()">Run Scrape</button>
-        <span id="scrapeStatus" style="margin-left: 12px; color: var(--text-dim); font-size: 13px;"></span>
+        <p style="color: var(--text-muted); font-size: 14px; margin-bottom: 16px;">Scrape product pages for new strains, images, and prices. Follows product and collection links automatically.</p>
+
+        <div style="margin-bottom: 12px;">
+          <label style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; display: block; margin-bottom: 4px;">URL to Scrape</label>
+          <div style="display: flex; gap: 8px;">
+            <input type="text" id="scrapeUrl" value="https://dragonflybrandny.com/" placeholder="https://example.com/shop" style="flex:1; background: var(--bg); border: 1px solid var(--border-light); color: var(--text); padding: 10px 12px; border-radius: 8px; font-size: 13px; font-family: 'JetBrains Mono', monospace;">
+            <button class="btn" id="scrapeBtn" onclick="doScrape()">Scrape</button>
+          </div>
+        </div>
+
+        <div id="scrapeSitesList" style="margin-bottom: 12px;"></div>
+
+        <div style="display: flex; gap: 8px; align-items: end;">
+          <div style="flex:1;">
+            <label style="font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; display: block; margin-bottom: 4px;">Save a Site</label>
+            <div style="display: flex; gap: 6px;">
+              <input type="text" id="newSiteName" placeholder="Site name" style="flex:1; background: var(--bg); border: 1px solid var(--border-light); color: var(--text); padding: 8px 10px; border-radius: 6px; font-size: 12px;">
+              <input type="text" id="newSiteUrl" placeholder="https://..." style="flex:2; background: var(--bg); border: 1px solid var(--border-light); color: var(--text); padding: 8px 10px; border-radius: 6px; font-size: 12px; font-family: 'JetBrains Mono', monospace;">
+              <button class="btn btn-outline btn-sm" onclick="addScrapeSite()">Add</button>
+            </div>
+          </div>
+        </div>
+
+        <span id="scrapeStatus" style="display: block; margin-top: 12px; color: var(--text-dim); font-size: 13px;"></span>
       </div>
       <div id="scrapeResults" class="scrape-results"></div>
     </div>
@@ -472,6 +493,7 @@ function switchTab(tab) {
   if (tab === 'dashboard') loadDashboard();
   if (tab === 'products') loadProducts();
   if (tab === 'drops') loadDrops();
+  if (tab === 'scraper') loadScrapeSites();
   if (tab === 'settings') loadSettings();
 }
 
@@ -700,14 +722,53 @@ async function deleteProduct(name) {
 }
 
 // --- Scraper ---
+async function loadScrapeSites() {
+  try {
+    const r = await fetch(`${API}/api/admin/scrape-sites?key=${encodeURIComponent(adminKey)}`);
+    const sites = await r.json();
+    const container = document.getElementById('scrapeSitesList');
+    if (!sites.length) { container.innerHTML = ''; return; }
+    container.innerHTML = '<div style="display:flex;flex-wrap:wrap;gap:6px;">' +
+      sites.map((s, i) =>
+        `<button class="btn btn-outline btn-sm" onclick="document.getElementById('scrapeUrl').value='${esc(s.url)}'" style="font-size:11px;position:relative;padding-right:24px;">
+          ${esc(s.name)}
+          <span onclick="event.stopPropagation();removeScrapeSite(${i})" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);cursor:pointer;color:var(--error);font-size:14px;">x</span>
+        </button>`
+      ).join('') + '</div>';
+  } catch (e) {}
+}
+
+async function addScrapeSite() {
+  const name = document.getElementById('newSiteName').value.trim();
+  const url = document.getElementById('newSiteUrl').value.trim();
+  if (!name || !url) { toast('Name and URL required', true); return; }
+  await fetch(`${API}/api/admin/scrape-sites?key=${encodeURIComponent(adminKey)}`, {
+    method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({name, url})
+  });
+  document.getElementById('newSiteName').value = '';
+  document.getElementById('newSiteUrl').value = '';
+  loadScrapeSites();
+  toast('Site saved');
+}
+
+async function removeScrapeSite(idx) {
+  await fetch(`${API}/api/admin/scrape-sites/${idx}?key=${encodeURIComponent(adminKey)}`, { method: 'DELETE' });
+  loadScrapeSites();
+}
+
 async function doScrape() {
   const btn = document.getElementById('scrapeBtn');
   const status = document.getElementById('scrapeStatus');
+  const url = document.getElementById('scrapeUrl').value.trim();
+  if (!url) { toast('Enter a URL to scrape', true); return; }
+
   btn.disabled = true;
-  status.innerHTML = '<span class="spinner"></span> Scraping...';
+  status.innerHTML = '<span class="spinner"></span> Scraping ' + esc(url) + '... (following product links)';
 
   try {
-    const r = await fetch(`${API}/api/admin/scrape?key=${encodeURIComponent(adminKey)}`, { method: 'POST' });
+    const r = await fetch(`${API}/api/admin/scrape?key=${encodeURIComponent(adminKey)}`, {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ url })
+    });
     const data = await r.json();
 
     if (!r.ok) {
@@ -722,24 +783,34 @@ async function doScrape() {
     if (data.products.length === 0) {
       results.innerHTML = '<div style="color: var(--text-dim); padding: 20px; text-align: center;">No products found. The site may use JavaScript rendering.</div>';
     } else {
-      results.innerHTML = '<h3 style="font-family:Oswald,sans-serif;margin-bottom:12px;">Discovered Products</h3>' +
-        data.products.map(p =>
-          `<div class="scrape-item">
-            <div>
-              <span class="name">${esc(p.name)}</span>
-              ${p.url ? `<a href="${esc(p.url)}" target="_blank" style="color:var(--accent);font-size:12px;margin-left:8px;">view</a>` : ''}
+      results.innerHTML = '<h3 style="font-family:Oswald,sans-serif;margin-bottom:12px;">Discovered Products (' + data.totalFound + ')</h3>' +
+        data.products.map(p => {
+          const priceStr = p.price ? `<span style="color:var(--accent);font-size:12px;margin-left:8px;">$${esc(p.price)}</span>` : '';
+          const catStr = p.category ? `<span style="color:var(--text-dim);font-size:11px;margin-left:6px;">[${esc(p.category)}]</span>` : '';
+          const descStr = p.description ? `<div style="color:var(--text-dim);font-size:11px;margin-top:4px;max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(p.description)}</div>` : '';
+          const thumbs = (p.images || []).slice(0, 3).map(img =>
+            `<img src="${esc(img)}" style="width:32px;height:32px;object-fit:cover;border-radius:4px;border:1px solid var(--border);" loading="lazy" onerror="this.style.display='none'">`
+          ).join('');
+          return `<div class="scrape-item">
+            <div style="flex:1;">
+              <div>
+                <span class="name">${esc(p.name)}</span>${priceStr}${catStr}
+                ${p.url ? `<a href="${esc(p.url)}" target="_blank" style="color:var(--accent);font-size:11px;margin-left:6px;">view</a>` : ''}
+              </div>
+              ${descStr}
+              ${thumbs ? `<div style="display:flex;gap:4px;margin-top:4px;">${thumbs}</div>` : ''}
             </div>
-            <div style="display:flex;align-items:center;gap:8px;">
+            <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
               ${p.isNew ? '<span class="new-badge">NEW</span>' : '<span class="existing-badge">EXISTS</span>'}
               ${p.isNew ? `<button class="btn btn-sm" onclick="importProduct('${esc(p.name.replace(/'/g, "\\'"))}','${esc((p.url||'').replace(/'/g, "\\'"))}')">Import</button>` : ''}
             </div>
-          </div>`
-        ).join('');
+          </div>`;
+        }).join('');
 
       if (data.images.length > 0) {
-        results.innerHTML += '<h3 style="font-family:Oswald,sans-serif;margin:20px 0 12px;">Discovered Images (' + data.images.length + ')</h3>' +
+        results.innerHTML += '<h3 style="font-family:Oswald,sans-serif;margin:20px 0 12px;">All Discovered Images (' + data.images.length + ')</h3>' +
           '<div style="display:flex;flex-wrap:wrap;gap:8px;">' +
-          data.images.slice(0, 20).map(img =>
+          data.images.slice(0, 30).map(img =>
             `<img src="${esc(img)}" style="width:60px;height:60px;object-fit:cover;border-radius:6px;border:1px solid var(--border);" loading="lazy" onerror="this.style.display='none'">`
           ).join('') + '</div>';
       }
@@ -777,9 +848,7 @@ async function loadSettings() {
     const envVars = [
       { name: 'ANTHROPIC_API_KEY', desc: 'Claude Vision scanning', ok: health.status === 'ok' },
       { name: 'ADMIN_KEY', desc: 'Admin authentication', ok: true },
-      { name: 'SMTP_USER', desc: 'Email notifications', ok: health.emailConfigured },
-      { name: 'SMTP_PASS', desc: 'Email password', ok: health.emailConfigured },
-      { name: 'SMTP_HOST', desc: 'Email server host', ok: true },
+      { name: 'RESEND_API_KEY', desc: 'Email via Resend', ok: health.resendConfigured },
       { name: 'NOTIFY_EMAIL', desc: 'Notification recipient', ok: true },
     ];
 
