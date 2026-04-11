@@ -76,9 +76,9 @@ app.post("/api/scan", async (req, res) => {
     return res.status(500).json({ error: "ANTHROPIC_API_KEY not configured on server." });
   }
 
-  const { image_base64, media_type, strain_list } = req.body;
-  if (!image_base64 || !strain_list) {
-    return res.status(400).json({ error: "image_base64 and strain_list are required." });
+  const { image_base64, media_type } = req.body;
+  if (!image_base64) {
+    return res.status(400).json({ error: "image_base64 is required." });
   }
 
   try {
@@ -90,8 +90,8 @@ app.post("/api/scan", async (req, res) => {
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 200,
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 300,
         messages: [{
           role: "user",
           content: [
@@ -101,45 +101,9 @@ app.post("/api/scan", async (req, res) => {
             },
             {
               type: "text",
-              text: `You are a cannabis product identifier for the Dragonfly brand. Your #1 job is to READ THE ACTUAL TEXT ON THE LABEL using OCR. Do NOT guess the product type from the shape of the packaging.
+              text: `OCR this product label. Read every word of text you can see and return as JSON.
 
-CRITICAL: The product type is PRINTED ON THE LABEL in GOLD TEXT. Read it exactly. Common product types printed on Dragonfly labels:
-
-VAPE PRODUCTS (cylindrical pen/cartridge shape, often with a mouthpiece):
-- "DISPOSABLE" = Vape (disposable all-in-one pen)
-- "ALL-IN-ONE" or "AIO" = Vape (disposable)
-- "VAPE" = Vape
-- "CARTRIDGE" or "CART" = Vape cartridge
-- "510" = Vape cartridge (510-thread)
-
-PREROLL PRODUCTS (tube packaging):
-- "PREROLL" or "PRE-ROLL" = Preroll 1g (regular joint)
-- "INFUSED" or "INFUSED PREROLL" = Infused Preroll 1.25g (concentrate-infused joint)
-
-FLOWER PRODUCTS (jar packaging):
-- "FLOWER" = Flower 3.5g
-- "1 OZ" or "PREMIUM OUNCE" or "28G" = 1oz Premium Flower
-
-OTHER:
-- "14 PACK" or "14-PACK" = 14 Pack Prerolls
-- "GUMMY" or "GUMMIES" or "EDIBLE" = Gummies
-
-IMPORTANT DISTINCTIONS:
-- A DISPOSABLE/VAPE is NOT an infused preroll. They are completely different products.
-- If the label says "DISPOSABLE", "VAPE", "AIO", "ALL-IN-ONE", or "CARTRIDGE" -- it is a VAPE, not a preroll.
-- If the label says "INFUSED" -- it is an INFUSED PREROLL (a joint with concentrate), not a vape.
-- READ the gold text on the label to determine product type. Do not infer from packaging shape alone.
-
-The complete list of known Dragonfly strain names is: ${strain_list}
-
-TASK:
-1. READ the PRODUCT TYPE from the GOLD text on the label (look for words like DISPOSABLE, VAPE, PREROLL, FLOWER, INFUSED, etc.)
-2. READ the STRAIN NAME from the BLACK text
-3. READ the THC percentage if visible
-4. Note any other text you can see (net weight, etc.)
-
-Respond with ONLY valid JSON:
-{"strain": "exact strain name", "product_type": "exact product type text from label", "thc": "THC % or null", "confidence": "high/medium/low", "all_text_seen": "brief list of all text you can read on the label"}`
+{"strain": "the strain/flavor name", "product_type": "the product type text (e.g. PREROLL, DISPOSABLE, FLOWER, VAPE, INFUSED, etc.)", "thc": "THC percentage if visible", "brand": "brand name", "weight": "net weight if visible", "all_text": "all other text on the label"}`
             }
           ]
         }]

@@ -343,15 +343,12 @@ export default function DragonflyScanner() {
       setScanProgress(30);
       setScanStatus("AI analyzing product...");
       
-      const strainList = strainNames.join(", ");
-      
       const response = await fetch("/api/scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           image_base64: base64,
           media_type: mediaType,
-          strain_list: strainList,
         })
       });
       
