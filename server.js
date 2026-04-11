@@ -1,5 +1,4 @@
 const express = require("express");
-const nodemailer = require("nodemailer");
 const cors = require("cors");
 const path = require("path");
 const fs = require("fs");
@@ -150,25 +149,12 @@ Rules:
 
 // --- Email Configuration ---------------------------------------------------
 // Set these as Railway environment variables:
-//   SMTP_HOST=smtp.gmail.com (or your provider)
-//   SMTP_PORT=587
-//   SMTP_USER=your-email@gmail.com
-//   SMTP_PASS=your-app-password
+//   RESEND_API_KEY=re_xxxxxxxx (from resend.com)
 //   NOTIFY_EMAIL=sasha@dopestr.com
-//   FROM_EMAIL=noreply@dragonflybrandny.com
-
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || "smtp.gmail.com",
-  port: parseInt(process.env.SMTP_PORT || "587"),
-  secure: false,
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-});
+//   FROM_EMAIL=dragonfly@cannacrypted.com
 
 const NOTIFY_EMAIL = process.env.NOTIFY_EMAIL || "sasha@dopestr.com";
-const FROM_EMAIL = process.env.FROM_EMAIL || "noreply@dragonflybrandny.com";
+const FROM_EMAIL = process.env.FROM_EMAIL || "dragonfly@cannacrypted.com";
 
 // --- In-memory signup log (persists until server restart) ------------------
 const signups = [];
@@ -250,18 +236,29 @@ Signup #${signups.length}
 
   // Send email
   try {
-    if (process.env.SMTP_USER && process.env.SMTP_PASS) {
-      await transporter.sendMail({
-        from: `"Dragonfly Scanner" <${FROM_EMAIL}>`,
-        to: NOTIFY_EMAIL,
-        subject: `New Signup: ${name} -- Dragonfly Scanner`,
-        text: textBody,
-        html: htmlBody,
+    if (process.env.RESEND_API_KEY) {
+      const emailRes = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${process.env.RESEND_API_KEY}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          from: `"Dragonfly Scanner" <${FROM_EMAIL}>`,
+          to: NOTIFY_EMAIL,
+          subject: `New Signup: ${name} -- Dragonfly Scanner`,
+          text: textBody,
+          html: htmlBody
+        })
       });
+      if (!emailRes.ok) {
+        const errText = await emailRes.text();
+        throw new Error(`Resend API error ${emailRes.status}: ${errText}`);
+      }
       console.log(`Email sent to ${NOTIFY_EMAIL} for signup: ${name} <${email}>`);
     } else {
-      console.log(`SMTP not configured -- signup logged but email not sent.`);
-      console.log(`  To enable emails, set SMTP_USER and SMTP_PASS env vars.`);
+      console.log(`Resend not configured -- signup logged but email not sent.`);
+      console.log(`  To enable emails, set RESEND_API_KEY env var.`);
     }
 
     // Always log to console as backup
@@ -301,7 +298,7 @@ app.get("/api/health", (req, res) => {
     status: "ok",
     uptime: process.uptime(),
     signups: signups.length,
-    emailConfigured: !!(process.env.SMTP_USER && process.env.SMTP_PASS),
+    resendConfigured: !!process.env.RESEND_API_KEY,
   });
 });
 
@@ -468,7 +465,7 @@ app.get("*", (req, res) => {
 app.listen(PORT, () => {
   console.log(`\nDragonfly Scanner API running on port ${PORT}`);
   console.log(`  Notifications -> ${NOTIFY_EMAIL}`);
-  console.log(`  SMTP configured: ${!!(process.env.SMTP_USER && process.env.SMTP_PASS)}`);
+  console.log(`  Resend configured: ${!!process.env.RESEND_API_KEY}`);
   console.log(`  Admin signups:   /api/signups${process.env.ADMIN_KEY ? "?key=***" : ""}`);
   console.log(`  Admin dashboard: /admin`);
   console.log(`  Products loaded: ${Object.keys(productsDB.strains || {}).length} strains\n`);
