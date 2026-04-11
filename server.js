@@ -110,9 +110,21 @@ app.post("/api/scan", async (req, res) => {
             },
             {
               type: "text",
-              text: `OCR this product label. Read every word of text you can see and return as JSON.
+              text: `You are the Dragonfly cannabis brand scanner. Look at this image and respond with JSON.
 
-{"strain": "the strain/flavor name", "product_type": "the product type text (e.g. PREROLL, DISPOSABLE, FLOWER, VAPE, INFUSED, etc.)", "thc": "THC percentage if visible", "brand": "brand name", "weight": "net weight if visible", "all_text": "all other text on the label"}`
+If this is a cannabis product: OCR the label and extract strain name, product type, THC%, brand, and weight.
+If this is NOT a cannabis product at all (food, drink, random object, etc.): still identify what it is.
+
+In ALL cases, write a short witty one-liner ("roast") as if you're a sarcastic budtender who only respects Dragonfly products. Be funny, not mean. Reference what you actually see.
+
+Examples of roasts:
+- Coffee cup: "Caffeine? Cute. Come back when you're ready for the real wake-and-bake."
+- Competitor weed: "We see you settling. Dragonfly would never."
+- A shoe: "Interesting strain. What's the THC on that, 0%?"
+- Dragonfly product: "Now THAT'S what we're talking about. Excellent taste."
+
+Respond ONLY with valid JSON:
+{"strain": "strain name or what the object is", "product_type": "product type from label or object type", "thc": "THC% or null", "brand": "brand name or null", "weight": "weight or null", "all_text": "other label text", "is_cannabis": true/false, "is_dragonfly": true/false, "roast": "your witty one-liner about what you see"}`
             }
           ]
         }]
@@ -136,6 +148,12 @@ app.post("/api/scan", async (req, res) => {
     let confidence = "low";
     let raw_ocr = rawText;
 
+    let brand = "";
+    let roast = "";
+    let is_cannabis = true;
+    let is_dragonfly = false;
+    let all_text = "";
+
     try {
       let jsonStr = rawText;
       if (jsonStr.startsWith("```")) {
@@ -146,21 +164,25 @@ app.post("/api/scan", async (req, res) => {
       product_type = parsed.product_type || "UNKNOWN";
       thc = parsed.thc || null;
       confidence = parsed.confidence || "medium";
+      brand = parsed.brand || "";
+      roast = parsed.roast || "";
+      is_cannabis = parsed.is_cannabis !== false;
+      is_dragonfly = parsed.is_dragonfly === true;
+      all_text = parsed.all_text || "";
       raw_ocr = null;
     } catch (e) {
-      // If Claude didn't return JSON, treat raw text as strain name (backward compat)
       strain = rawText.replace(/["\n]/g, "").trim() || "UNKNOWN";
     }
 
-    console.log(`Vision scan: strain="${strain}", product_type="${product_type}", thc="${thc}"`);
+    console.log(`Vision scan: strain="${strain}", product_type="${product_type}", brand="${brand}", roast="${roast}"`);
 
     // Track scan
     scanCount++;
     recentScans.unshift({ strain, product_type, timestamp: new Date().toISOString() });
     if (recentScans.length > 50) recentScans.length = 50;
-    logActivity("scan", `Scanned: ${strain} (${product_type})`);
+    logActivity("scan", `Scanned: ${strain} (${product_type}) [${brand || "unknown brand"}]`);
 
-    res.json({ strain, product_type, thc, confidence, raw_ocr });
+    res.json({ strain, product_type, thc, confidence, brand, roast, is_cannabis, is_dragonfly, all_text, raw_ocr });
   } catch (err) {
     console.error("Vision proxy error:", err.message);
     res.status(500).json({ error: "Vision scan failed: " + err.message });

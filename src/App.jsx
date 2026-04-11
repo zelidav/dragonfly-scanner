@@ -427,15 +427,17 @@ export default function DragonflyScanner() {
       const aiConfidence = result.confidence || "low";
       const aiBrand = (result.brand || "").toLowerCase();
       const aiAllText = result.all_text || "";
+      const aiRoast = result.roast || "";
+      const aiIsCannabis = result.is_cannabis !== false;
+      const aiIsDragonfly = result.is_dragonfly === true;
 
-      console.log("OCR result:", { aiStrain, aiProductType, aiThc, aiBrand, aiAllText });
+      console.log("OCR result:", { aiStrain, aiProductType, aiThc, aiBrand, aiRoast, aiIsCannabis, aiIsDragonfly });
 
       setScanProgress(90);
 
-      // Check if this is a Dragonfly product
-      const isDragonfly = aiBrand.includes("dragonfly") || aiAllText?.toLowerCase().includes("dragonfly") || aiBrand === "";
-      // If brand is clearly something else (not empty, not dragonfly), it's not ours
-      const isOtherBrand = aiBrand && !aiBrand.includes("dragonfly") && aiBrand !== "unknown";
+      // Use AI's own brand detection
+      const isDragonfly = aiIsDragonfly || aiBrand.includes("dragonfly");
+      const isOtherBrand = !isDragonfly && (aiBrand || !aiIsCannabis);
 
       // Match the AI response against our strain database
       let matched = null;
@@ -520,7 +522,7 @@ export default function DragonflyScanner() {
       if (matched && !isOtherBrand) {
         const cat = STRAIN_DB[matched]?.category || "";
         setScanStatus(`Identified: ${matched} (${cat})`);
-        setLabelRead({ strain: aiStrain, product_type: aiProductType, thc: aiThc, confidence: aiConfidence, isDragonfly: true });
+        setLabelRead({ strain: aiStrain, product_type: aiProductType, thc: aiThc, confidence: aiConfidence, isDragonfly: true, roast: aiRoast });
         setTimeout(() => {
           setScanning(false);
           setScanStatus("");
@@ -533,7 +535,7 @@ export default function DragonflyScanner() {
         const labelInfo = {
           strain: aiStrain, product_type: aiProductType, thc: aiThc,
           confidence: aiConfidence, brand: aiBrand, all_text: aiAllText,
-          isDragonfly: !isOtherBrand,
+          isDragonfly: isDragonfly, is_cannabis: aiIsCannabis, roast: aiRoast,
         };
         // Find closest comparable Dragonfly product
         if (isOtherBrand && aiStrain !== "UNKNOWN") {
@@ -1504,30 +1506,35 @@ export default function DragonflyScanner() {
             )}
             {labelRead.isDragonfly === false ? (
               <>
-                <div style={{ fontSize: 32, marginBottom: 8 }}>😬</div>
-                <div style={{ ...styles.typeBadge(COLORS.error), background: "rgba(239,68,68,0.12)" }}>THAT'S NOT DRAGONFLY</div>
+                <div style={{ fontSize: 32, marginBottom: 8 }}>{labelRead.is_cannabis === false ? "🤨" : "😬"}</div>
+                <div style={{ ...styles.typeBadge(COLORS.error), background: "rgba(239,68,68,0.12)" }}>
+                  {labelRead.is_cannabis === false ? "THAT'S NOT EVEN WEED" : "THAT'S NOT DRAGONFLY"}
+                </div>
               </>
             ) : (
               <div style={{ ...styles.typeBadge(COLORS.textMuted), background: "rgba(255,255,255,0.08)", color: COLORS.textMuted }}>NOT IN DATABASE</div>
             )}
             <h1 style={styles.strainName}>{labelRead.strain}</h1>
-            {labelRead.isDragonfly === false ? (
-              <div style={{ ...styles.strainCategory, color: COLORS.textDim, fontStyle: "italic" }}>
-                {labelRead.brand && labelRead.brand !== "unknown" ? `"${labelRead.brand.toUpperCase()}"` : "Some other brand"} -- We don't know her.
+            {labelRead.isDragonfly === false && labelRead.roast ? (
+              <div style={{ fontSize: 14, color: COLORS.accent, fontStyle: "italic", lineHeight: 1.5, marginTop: 4, textAlign: "center", padding: "0 8px" }}>
+                "{labelRead.roast}"
               </div>
-            ) : (
+            ) : labelRead.isDragonfly !== false && (
               <div style={styles.strainCategory}>
                 {labelRead.product_type !== "UNKNOWN" ? labelRead.product_type : "Product"} {labelRead.thc ? `- THC ${labelRead.thc}` : ""}
               </div>
             )}
           </div>
 
-          {/* Sarcastic nudge + comparable */}
+          {/* Nudge toward Dragonfly */}
           {labelRead.isDragonfly === false && (
             <div style={{ ...styles.infoSection }}>
               <div style={{ background: "rgba(200,255,0,0.04)", borderRadius: 12, padding: 16, border: `1px solid ${COLORS.accentDim}`, textAlign: "center", marginBottom: 16 }}>
                 <div style={{ fontSize: 14, color: COLORS.text, lineHeight: 1.6 }}>
-                  Look, {labelRead.brand && labelRead.brand !== "unknown" ? labelRead.brand : "that"} is... fine. But you came to the <span style={{ color: COLORS.accent, fontWeight: 600 }}>Dragonfly</span> scanner for a reason. Let us show you what you're missing.
+                  {labelRead.is_cannabis === false
+                    ? <>Whatever that is, it's not what we do here. We're about <span style={{ color: COLORS.accent, fontWeight: 600 }}>real good weed</span>. Try scanning an actual product, or find Dragonfly near you.</>
+                    : <>You came to the <span style={{ color: COLORS.accent, fontWeight: 600 }}>Dragonfly</span> scanner for a reason. Let us show you what you're missing.</>
+                  }
                 </div>
               </div>
             </div>
