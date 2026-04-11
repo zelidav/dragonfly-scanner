@@ -1503,21 +1503,39 @@ export default function DragonflyScanner() {
               </div>
             )}
             {labelRead.isDragonfly === false ? (
-              <div style={{ ...styles.typeBadge(COLORS.error), background: "rgba(239,68,68,0.12)" }}>NOT A DRAGONFLY PRODUCT</div>
+              <>
+                <div style={{ fontSize: 32, marginBottom: 8 }}>😬</div>
+                <div style={{ ...styles.typeBadge(COLORS.error), background: "rgba(239,68,68,0.12)" }}>THAT'S NOT DRAGONFLY</div>
+              </>
             ) : (
               <div style={{ ...styles.typeBadge(COLORS.textMuted), background: "rgba(255,255,255,0.08)", color: COLORS.textMuted }}>NOT IN DATABASE</div>
             )}
             <h1 style={styles.strainName}>{labelRead.strain}</h1>
-            <div style={styles.strainCategory}>
-              {labelRead.brand && labelRead.brand !== "unknown" ? labelRead.brand.toUpperCase() + " - " : ""}
-              {labelRead.product_type !== "UNKNOWN" ? labelRead.product_type : "Product"} {labelRead.thc ? `- THC ${labelRead.thc}` : ""}
-            </div>
+            {labelRead.isDragonfly === false ? (
+              <div style={{ ...styles.strainCategory, color: COLORS.textDim, fontStyle: "italic" }}>
+                {labelRead.brand && labelRead.brand !== "unknown" ? `"${labelRead.brand.toUpperCase()}"` : "Some other brand"} -- We don't know her.
+              </div>
+            ) : (
+              <div style={styles.strainCategory}>
+                {labelRead.product_type !== "UNKNOWN" ? labelRead.product_type : "Product"} {labelRead.thc ? `- THC ${labelRead.thc}` : ""}
+              </div>
+            )}
           </div>
 
-          {/* Suggested Dragonfly comparable */}
+          {/* Sarcastic nudge + comparable */}
+          {labelRead.isDragonfly === false && (
+            <div style={{ ...styles.infoSection }}>
+              <div style={{ background: "rgba(200,255,0,0.04)", borderRadius: 12, padding: 16, border: `1px solid ${COLORS.accentDim}`, textAlign: "center", marginBottom: 16 }}>
+                <div style={{ fontSize: 14, color: COLORS.text, lineHeight: 1.6 }}>
+                  Look, {labelRead.brand && labelRead.brand !== "unknown" ? labelRead.brand : "that"} is... fine. But you came to the <span style={{ color: COLORS.accent, fontWeight: 600 }}>Dragonfly</span> scanner for a reason. Let us show you what you're missing.
+                </div>
+              </div>
+            </div>
+          )}
+
           {labelRead.isDragonfly === false && labelRead.suggestedDragonfly && STRAIN_DB[labelRead.suggestedDragonfly] && (
             <div style={styles.infoSection}>
-              <div style={styles.sectionTitle}>Try Dragonfly Instead</div>
+              <div style={styles.sectionTitle}>What You Actually Want</div>
               <div style={{ background: COLORS.bgCard, borderRadius: 12, padding: 16, border: `1px solid ${COLORS.accentDim}`, cursor: "pointer" }}
                 onClick={() => { setScannedStrain(labelRead.suggestedDragonfly); setLabelRead(null); }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -1537,7 +1555,7 @@ export default function DragonflyScanner() {
           {/* Nearest retailers */}
           {labelRead.isDragonfly === false && (
             <div style={styles.infoSection}>
-              <div style={styles.sectionTitle}>Find Dragonfly Near You</div>
+              <div style={styles.sectionTitle}>Upgrade Your Situation</div>
               <NearestRetailers />
             </div>
           )}
