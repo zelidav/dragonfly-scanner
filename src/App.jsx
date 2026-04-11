@@ -1612,6 +1612,16 @@ export default function DragonflyScanner() {
     if (!scannedStrain || !STRAIN_DB[scannedStrain]) return null;
     const s = STRAIN_DB[scannedStrain];
     const tc = typeColor(s.type);
+    const lr = labelRead || {};
+
+    // Label is truth — use label data for product type, THC, and display
+    // DB supplements with genetics, flavor, effects, description, image
+    const displayProductType = lr.product_type && lr.product_type !== "UNKNOWN" ? lr.product_type : s.category;
+    const displayThc = lr.thc || s.thc;
+    // Show scanned image if product type from label differs from DB category (e.g. scanned a vape but DB has preroll)
+    const categoryMismatch = lr.product_type && lr.product_type !== "UNKNOWN" && s.category &&
+      !s.category.toUpperCase().includes(lr.product_type) && !lr.product_type.includes(s.category.toUpperCase());
+    const displayImage = categoryMismatch && scannedImage ? scannedImage : s.image;
 
     return (
       <div style={styles.resultContainer}>
@@ -1623,17 +1633,28 @@ export default function DragonflyScanner() {
         </button>
 
         <div style={styles.strainHeader}>
-          {s.image && (
+          {displayImage && (
             <div style={{ width: 120, height: 120, margin: "0 auto 12px", borderRadius: 12, overflow: "hidden", background: COLORS.bgCard, border: `1px solid ${COLORS.borderLight}` }}>
-              <img src={s.image} alt={scannedStrain} style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={(e) => { e.target.style.display = "none"; }} />
+              <img src={displayImage} alt={scannedStrain} style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={(e) => { e.target.style.display = "none"; }} />
             </div>
           )}
           <div style={styles.typeBadge(tc)}>{s.type}</div>
           <h1 style={styles.strainName}>{scannedStrain}</h1>
-          <div style={styles.strainCategory}>{s.category} - THC {labelRead?.thc || s.thc}</div>
+          <div style={styles.strainCategory}>{displayProductType} - THC {displayThc}</div>
+          {categoryMismatch && (
+            <div style={{ fontSize: 11, color: COLORS.textDim, marginTop: 4, fontStyle: "italic" }}>
+              Label: {lr.product_type} | DB: {s.category}
+            </div>
+          )}
         </div>
 
-        {/* Quick Stats */}
+        {lr.roast && lr.isDragonfly && (
+          <div style={{ textAlign: "center", padding: "8px 16px", marginBottom: 8 }}>
+            <div style={{ fontSize: 13, color: COLORS.accent, fontStyle: "italic" }}>"{lr.roast}"</div>
+          </div>
+        )}
+
+        {/* Quick Stats — label first, DB fills gaps */}
         <div style={styles.infoSection}>
           <div style={styles.sectionTitle}>Quick Stats</div>
           <div style={styles.statGrid}>
@@ -1643,7 +1664,7 @@ export default function DragonflyScanner() {
             </div>
             <div style={styles.statItem}>
               <div style={styles.statLabel}>THC</div>
-              <div style={styles.statValue}>{labelRead?.thc || s.thc}</div>
+              <div style={styles.statValue}>{displayThc}</div>
             </div>
             <div style={styles.statItem}>
               <div style={styles.statLabel}>Flavor</div>
