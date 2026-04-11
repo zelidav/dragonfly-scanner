@@ -115,6 +115,12 @@ app.post("/api/scan", async (req, res) => {
 If this is a cannabis product: OCR the label and extract strain name, product type, THC%, brand, and weight.
 If this is NOT a cannabis product at all (food, drink, random object, etc.): still identify what it is.
 
+THC READING RULES:
+- For vapes/cartridges/disposables: THC is usually 80-95%. Look for the HIGHEST percentage on the label. If you see "85.10%" or "851 mg/g" that means 85.1% THC.
+- mg/g to percentage: divide by 10 (e.g. 851 mg/g = 85.1%)
+- If multiple THC numbers appear, use the highest one for vapes, or the one labeled "Total THC" or "THC"
+- For flower/prerolls: THC is usually 15-35%
+
 In ALL cases, write a short witty one-liner ("roast") as if you're a sarcastic budtender who only respects Dragonfly products. Be funny, not mean. Reference what you actually see.
 
 Examples of roasts:
