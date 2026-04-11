@@ -853,12 +853,16 @@ async function loadDrops() {
 
 function renderDrops() {
   const container = document.getElementById('dropsList');
-  if (!dropsData || dropsData.length === 0) {
+  const drops = dropsData.drops || {};
+  const dropIds = Object.keys(drops);
+
+  if (dropIds.length === 0) {
     container.innerHTML = '<div style="color: var(--text-dim); text-align: center; padding: 40px;">No drops yet. Create one to get started.</div>';
     return;
   }
 
-  container.innerHTML = dropsData.map(drop => {
+  container.innerHTML = dropIds.map(dropId => {
+    const drop = drops[dropId];
     const types = drop.types || {};
     const typeNames = ['indica', 'sativa', 'hybrid'];
     const existingTypes = Object.keys(types);
@@ -869,42 +873,44 @@ function renderDrops() {
       const typeColor = typeName === 'indica' ? 'var(--indica)' : typeName === 'sativa' ? 'var(--sativa)' : 'var(--hybrid)';
       const badgeClass = 'badge-' + typeName;
 
-      const patternThumb = t.pattern?.thumbnail ? `<img src="${esc(t.pattern.thumbnail)}" alt="pattern">` : '';
-      const colorThumb = t.color?.thumbnail ? `<img src="${esc(t.color.thumbnail)}" alt="color">` : '';
+      const patternThumb = t.thumbPattern ? `<img src="${esc(t.thumbPattern)}" alt="pattern" style="max-width:100%;border-radius:6px;">` : '<span style="color:var(--text-dim)">No pattern</span>';
+      const colorThumb = t.thumbColor ? `<img src="${esc(t.thumbColor)}" alt="color" style="max-width:100%;border-radius:6px;">` : '<span style="color:var(--text-dim)">No color</span>';
 
-      const patternFingerprint = t.pattern?.fingerprint ? renderFingerprint(t.pattern.fingerprint) : '';
-      const colorFingerprint = t.color?.fingerprint ? renderFingerprint(t.color.fingerprint) : '';
+      const fp = t.fingerprint || {};
+      const patternFingerprint = fp.dominantColor ? renderFingerprint({ dominantColor: fp.dominantColor, phash: fp.phashPattern }) : '';
+      const colorFingerprint = fp.dominantColorAlt ? renderFingerprint({ dominantColor: fp.dominantColorAlt, phash: fp.phashColor }) : '';
 
       return `<div class="drop-type-section">
         <div class="drop-type-header">
           <span class="badge ${badgeClass}">${typeName}</span>
           <h4 style="color:${typeColor}">${esc(t.patternName || typeName + ' pattern')}</h4>
+          <span style="color:var(--text-dim);font-size:12px;margin-left:8px;">${esc(t.patternDescription || '')}</span>
         </div>
         <div class="drop-type-fields">
           <div class="form-group">
             <label>Pattern Name</label>
-            <input type="text" value="${esc(t.patternName || '')}" placeholder="e.g. Midnight Swirl" onchange="updateDropType('${esc(drop.id)}','${typeName}','patternName',this.value)">
+            <input type="text" value="${esc(t.patternName || '')}" placeholder="e.g. Midnight Swirl" onchange="updateDropType('${esc(dropId)}','${typeName}','patternName',this.value)">
           </div>
           <div class="form-group">
             <label>Description</label>
-            <input type="text" value="${esc(t.description || '')}" placeholder="Pattern description" onchange="updateDropType('${esc(drop.id)}','${typeName}','description',this.value)">
+            <input type="text" value="${esc(t.patternDescription || '')}" placeholder="Pattern description" onchange="updateDropType('${esc(dropId)}','${typeName}','patternDescription',this.value)">
           </div>
         </div>
         <div class="drop-uploads">
           <div class="drop-upload-area">
             <label>Pattern Image</label>
-            <div class="drop-upload-preview" id="preview-${drop.id}-${typeName}-pattern">${patternThumb}</div>
-            <input type="file" id="file-${drop.id}-${typeName}-pattern" accept="image/*" onchange="previewDropFile(this,'${drop.id}','${typeName}','pattern')">
-            <span class="drop-upload-trigger" onclick="document.getElementById('file-${drop.id}-${typeName}-pattern').click()">Choose File</span>
-            <button class="btn btn-sm" style="margin-top:6px;" onclick="uploadDropImage('${esc(drop.id)}','${typeName}','patterns')">Upload &amp; Fingerprint</button>
+            <div class="drop-upload-preview" id="preview-${dropId}-${typeName}-pattern">${patternThumb}</div>
+            <input type="file" id="file-${dropId}-${typeName}-pattern" accept="image/*" onchange="previewDropFile(this,'${dropId}','${typeName}','pattern')">
+            <span class="drop-upload-trigger" onclick="document.getElementById('file-${dropId}-${typeName}-pattern').click()">Choose File</span>
+            <button class="btn btn-sm" style="margin-top:6px;" onclick="uploadDropImage('${esc(dropId)}','${typeName}','patterns')">Upload &amp; Fingerprint</button>
             ${patternFingerprint}
           </div>
           <div class="drop-upload-area">
             <label>Color Image</label>
-            <div class="drop-upload-preview" id="preview-${drop.id}-${typeName}-color">${colorThumb}</div>
-            <input type="file" id="file-${drop.id}-${typeName}-color" accept="image/*" onchange="previewDropFile(this,'${drop.id}','${typeName}','color')">
-            <span class="drop-upload-trigger" onclick="document.getElementById('file-${drop.id}-${typeName}-color').click()">Choose File</span>
-            <button class="btn btn-sm" style="margin-top:6px;" onclick="uploadDropImage('${esc(drop.id)}','${typeName}','colors')">Upload &amp; Fingerprint</button>
+            <div class="drop-upload-preview" id="preview-${dropId}-${typeName}-color">${colorThumb}</div>
+            <input type="file" id="file-${dropId}-${typeName}-color" accept="image/*" onchange="previewDropFile(this,'${dropId}','${typeName}','color')">
+            <span class="drop-upload-trigger" onclick="document.getElementById('file-${dropId}-${typeName}-color').click()">Choose File</span>
+            <button class="btn btn-sm" style="margin-top:6px;" onclick="uploadDropImage('${esc(dropId)}','${typeName}','colors')">Upload &amp; Fingerprint</button>
             ${colorFingerprint}
           </div>
         </div>
@@ -913,7 +919,7 @@ function renderDrops() {
 
     const addTypeButtons = missingTypes.map(t => {
       const badgeClass = 'badge-' + t;
-      return `<button class="btn btn-outline btn-sm" onclick="addDropType('${esc(drop.id)}','${t}')"><span class="badge ${badgeClass}" style="margin-right:4px;">${t}</span> Add</button>`;
+      return `<button class="btn btn-outline btn-sm" onclick="addDropType('${esc(dropId)}','${t}')"><span class="badge ${badgeClass}" style="margin-right:4px;">${t}</span> Add</button>`;
     }).join('');
 
     return `<div class="drop-card">
@@ -923,8 +929,8 @@ function renderDrops() {
           <div class="drop-meta">${esc(drop.region || '')}${drop.region && drop.date ? ' &middot; ' : ''}${esc(drop.date || '')}${drop.description ? '<br>' + esc(drop.description) : ''}</div>
         </div>
         <div class="drop-card-actions">
-          <button class="btn btn-outline btn-sm" onclick="editDropMeta('${esc(drop.id)}')">Edit</button>
-          <button class="btn btn-danger btn-sm" onclick="deleteDrop('${esc(drop.id)}')">Delete</button>
+          <button class="btn btn-outline btn-sm" onclick="editDropMeta('${esc(dropId)}')">Edit</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteDrop('${esc(dropId)}')">Delete</button>
         </div>
       </div>
       <div class="drop-types">${typeSections}</div>
@@ -937,8 +943,10 @@ function renderFingerprint(fp) {
   if (!fp) return '';
   let html = '<div class="fingerprint-display">';
   if (fp.dominantColor) {
-    html += `<div class="fingerprint-color" style="background:${esc(fp.dominantColor)}" title="Dominant: ${esc(fp.dominantColor)}"></div>`;
-    html += `<span style="color:var(--text-dim)">${esc(fp.dominantColor)}</span>`;
+    const c = Array.isArray(fp.dominantColor) ? fp.dominantColor : [128,128,128];
+    const cssColor = `rgb(${c[0]},${c[1]},${c[2]})`;
+    html += `<div class="fingerprint-color" style="background:${cssColor}" title="RGB: ${c.join(', ')}"></div>`;
+    html += `<span style="color:var(--text-dim);font-size:11px;">rgb(${c.join(', ')})</span>`;
   }
   if (fp.phash) {
     html += renderPhashGrid(fp.phash);
@@ -948,14 +956,9 @@ function renderFingerprint(fp) {
 }
 
 function renderPhashGrid(phash) {
-  // Render phash as 8x8 grid: interpret hex string as bits
-  let bits = '';
-  for (let i = 0; i < phash.length; i++) {
-    bits += parseInt(phash[i], 16).toString(2).padStart(4, '0');
-  }
-  let grid = '<div class="phash-grid" title="pHash: ' + esc(phash) + '">';
-  for (let i = 0; i < 64; i++) {
-    const on = bits[i] === '1';
+  let grid = '<div class="phash-grid" title="pHash">';
+  for (let i = 0; i < 64 && i < phash.length; i++) {
+    const on = phash[i] === '1';
     grid += `<div class="phash-cell" style="background:${on ? 'var(--accent)' : 'var(--bg)'}"></div>`;
   }
   grid += '</div>';
@@ -990,7 +993,7 @@ async function uploadDropImage(dropId, typeName, endpoint) {
       const r = await fetch(`${API}/api/admin/drops/${encodeURIComponent(dropId)}/upload/${encodeURIComponent(typeName)}/${endpoint}?key=${encodeURIComponent(adminKey)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: base64, filename: file.name })
+        body: JSON.stringify({ image_base64: base64 })
       });
       if (r.ok) {
         const data = await r.json();
@@ -1073,7 +1076,7 @@ async function addDropType(dropId, typeName) {
 async function updateDropType(dropId, typeName, field, value) {
   try {
     await fetch(`${API}/api/admin/drops/${encodeURIComponent(dropId)}/types/${encodeURIComponent(typeName)}?key=${encodeURIComponent(adminKey)}`, {
-      method: 'PUT',
+      method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ [field]: value })
     });
@@ -1083,7 +1086,7 @@ async function updateDropType(dropId, typeName, field, value) {
 }
 
 function editDropMeta(dropId) {
-  const drop = dropsData.find(d => d.id === dropId);
+  const drop = (dropsData.drops || {})[dropId];
   if (!drop) return;
 
   const name = prompt('Drop name:', drop.name);
