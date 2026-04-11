@@ -2,6 +2,7 @@ const express = require("express");
 const cors = require("cors");
 const path = require("path");
 const fs = require("fs");
+const sharp = require("sharp");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -53,6 +54,31 @@ function saveProducts(data) {
 }
 
 let productsDB = loadProducts();
+
+// --- Drops persistence -------------------------------------------------------
+const DROPS_FILE = path.join(DATA_DIR, "drops.json");
+
+function loadDrops() {
+  try {
+    if (fs.existsSync(DROPS_FILE)) {
+      return JSON.parse(fs.readFileSync(DROPS_FILE, "utf-8"));
+    }
+  } catch (err) {
+    console.error("Error loading drops.json:", err.message);
+  }
+  return { drops: {} };
+}
+
+function saveDrops(data) {
+  try {
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(DROPS_FILE, JSON.stringify(data, null, 2), "utf-8");
+  } catch (err) {
+    console.error("Error saving drops.json:", err.message);
+  }
+}
+
+let dropsDB = loadDrops();
 
 // --- Admin auth middleware ----------------------------------------------------
 function requireAdmin(req, res, next) {
@@ -455,6 +481,187 @@ app.post("/api/admin/scrape", requireAdmin, async (req, res) => {
 // Admin route - serve admin.html
 app.get("/admin", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "admin.html"));
+});
+
+// --- Drops static files (thumbnails) -----------------------------------------
+app.use("/drops", express.static(path.join(__dirname, "public", "drops")));
+
+// --- Public Drops API --------------------------------------------------------
+app.get("/api/drops", (req, res) => {
+  res.json(dropsDB);
+});
+
+// --- Admin Drops API ---------------------------------------------------------
+
+// Get all drops
+app.get("/api/admin/drops", requireAdmin, (req, res) => {
+  res.json(dropsDB);
+});
+
+// Create a new drop
+app.post("/api/admin/drops", requireAdmin, (req, res) => {
+  const { id, name, region, date, description } = req.body;
+  if (!id || !name) {
+    return res.status(400).json({ error: "Drop id and name are required." });
+  }
+  if (dropsDB.drops[id]) {
+    return res.status(409).json({ error: `Drop "${id}" already exists.` });
+  }
+  dropsDB.drops[id] = { name, region: region || "", date: date || "", description: description || "", types: {} };
+  saveDrops(dropsDB);
+  logActivity("drop_add", `Added drop: ${name} (${id})`);
+  res.json({ success: true, drop: dropsDB.drops[id] });
+});
+
+// Update drop metadata
+app.put("/api/admin/drops/:id", requireAdmin, (req, res) => {
+  const id = decodeURIComponent(req.params.id);
+  if (!dropsDB.drops[id]) {
+    return res.status(404).json({ error: `Drop "${id}" not found.` });
+  }
+  const { name, region, date, description } = req.body;
+  if (name !== undefined) dropsDB.drops[id].name = name;
+  if (region !== undefined) dropsDB.drops[id].region = region;
+  if (date !== undefined) dropsDB.drops[id].date = date;
+  if (description !== undefined) dropsDB.drops[id].description = description;
+  saveDrops(dropsDB);
+  logActivity("drop_update", `Updated drop: ${id}`);
+  res.json({ success: true, drop: dropsDB.drops[id] });
+});
+
+// Delete a drop
+app.delete("/api/admin/drops/:id", requireAdmin, (req, res) => {
+  const id = decodeURIComponent(req.params.id);
+  if (!dropsDB.drops[id]) {
+    return res.status(404).json({ error: `Drop "${id}" not found.` });
+  }
+  delete dropsDB.drops[id];
+  saveDrops(dropsDB);
+  logActivity("drop_delete", `Deleted drop: ${id}`);
+  res.json({ success: true });
+});
+
+// Add/update a type within a drop
+app.post("/api/admin/drops/:id/types/:type", requireAdmin, (req, res) => {
+  const id = decodeURIComponent(req.params.id);
+  const type = decodeURIComponent(req.params.type);
+  if (!dropsDB.drops[id]) {
+    return res.status(404).json({ error: `Drop "${id}" not found.` });
+  }
+  if (!dropsDB.drops[id].types) dropsDB.drops[id].types = {};
+  const { patternName, patternDescription, fingerprint, thumbPattern, thumbColor } = req.body;
+  dropsDB.drops[id].types[type] = {
+    ...(dropsDB.drops[id].types[type] || {}),
+    patternName: patternName !== undefined ? patternName : (dropsDB.drops[id].types[type]?.patternName || ""),
+    patternDescription: patternDescription !== undefined ? patternDescription : (dropsDB.drops[id].types[type]?.patternDescription || ""),
+    fingerprint: fingerprint !== undefined ? fingerprint : (dropsDB.drops[id].types[type]?.fingerprint || null),
+    thumbPattern: thumbPattern !== undefined ? thumbPattern : (dropsDB.drops[id].types[type]?.thumbPattern || ""),
+    thumbColor: thumbColor !== undefined ? thumbColor : (dropsDB.drops[id].types[type]?.thumbColor || ""),
+  };
+  saveDrops(dropsDB);
+  logActivity("drop_type_add", `Added/updated type "${type}" in drop "${id}"`);
+  res.json({ success: true, type: dropsDB.drops[id].types[type] });
+});
+
+// Delete a type from a drop
+app.delete("/api/admin/drops/:id/types/:type", requireAdmin, (req, res) => {
+  const id = decodeURIComponent(req.params.id);
+  const type = decodeURIComponent(req.params.type);
+  if (!dropsDB.drops[id]) {
+    return res.status(404).json({ error: `Drop "${id}" not found.` });
+  }
+  if (!dropsDB.drops[id].types || !dropsDB.drops[id].types[type]) {
+    return res.status(404).json({ error: `Type "${type}" not found in drop "${id}".` });
+  }
+  delete dropsDB.drops[id].types[type];
+  saveDrops(dropsDB);
+  logActivity("drop_type_delete", `Deleted type "${type}" from drop "${id}"`);
+  res.json({ success: true });
+});
+
+// Upload image for a type, generate thumbnail and fingerprint
+app.post("/api/admin/drops/:id/upload/:type/:imageType", requireAdmin, async (req, res) => {
+  const id = decodeURIComponent(req.params.id);
+  const type = decodeURIComponent(req.params.type);
+  const imageType = decodeURIComponent(req.params.imageType);
+
+  if (!["patterns", "colors"].includes(imageType)) {
+    return res.status(400).json({ error: "imageType must be 'patterns' or 'colors'." });
+  }
+  if (!dropsDB.drops[id]) {
+    return res.status(404).json({ error: `Drop "${id}" not found.` });
+  }
+
+  const { image_base64 } = req.body;
+  if (!image_base64) {
+    return res.status(400).json({ error: "image_base64 is required." });
+  }
+
+  try {
+    const imgBuffer = Buffer.from(image_base64, "base64");
+
+    // Create thumbnail directory
+    const thumbDir = path.join(__dirname, "public", "drops", id, "thumbs", imageType);
+    if (!fs.existsSync(thumbDir)) fs.mkdirSync(thumbDir, { recursive: true });
+
+    // Save 300px thumbnail
+    const thumbPath = path.join(thumbDir, `${type}.jpg`);
+    await sharp(imgBuffer)
+      .resize(300, 300, { fit: "cover" })
+      .jpeg({ quality: 85 })
+      .toFile(thumbPath);
+
+    // Generate fingerprint: dominant color from 4x4 resize
+    const colorData = await sharp(imgBuffer)
+      .resize(4, 4, { fit: "cover" })
+      .raw()
+      .toBuffer();
+
+    let rSum = 0, gSum = 0, bSum = 0;
+    for (let i = 0; i < 16; i++) {
+      rSum += colorData[i * 3];
+      gSum += colorData[i * 3 + 1];
+      bSum += colorData[i * 3 + 2];
+    }
+    const dominantColor = {
+      r: Math.round(rSum / 16),
+      g: Math.round(gSum / 16),
+      b: Math.round(bSum / 16),
+    };
+
+    // Generate fingerprint: luminance grid from 8x8 resize
+    const gridData = await sharp(imgBuffer)
+      .resize(8, 8, { fit: "cover" })
+      .raw()
+      .toBuffer();
+
+    const grid = [];
+    for (let i = 0; i < 64; i++) {
+      const r = gridData[i * 3];
+      const g = gridData[i * 3 + 1];
+      const b = gridData[i * 3 + 2];
+      grid.push(0.299 * r + 0.587 * g + 0.114 * b);
+    }
+
+    // Generate phash: compare to mean luminance
+    const mean = grid.reduce((a, b) => a + b, 0) / grid.length;
+    const phash = grid.map(v => (v >= mean ? "1" : "0")).join("");
+
+    const fingerprint = { dominantColor, grid, phash };
+
+    const thumbUrl = `/drops/${id}/thumbs/${imageType}/${type}.jpg`;
+
+    logActivity("drop_upload", `Uploaded ${imageType} image for type "${type}" in drop "${id}"`);
+
+    res.json({
+      success: true,
+      fingerprint,
+      thumbUrl,
+    });
+  } catch (err) {
+    console.error("Drop image upload error:", err.message);
+    res.status(500).json({ error: "Image processing failed: " + err.message });
+  }
 });
 
 // --- SPA fallback ----------------------------------------------------------

@@ -1,0 +1,54 @@
+{
+  "drops": {
+    "ny-drop-1": {
+      "name": "NY Drop 1",
+      "region": "New York",
+      "date": "2026-03-17",
+      "description": "Dragonfly's inaugural New York drop featuring bold pop-art packaging by local NYC artists. Three distinct designs represent each strain type.",
+      "types": {
+        "indica": {
+          "patternName": "Legs & Heels",
+          "patternDescription": "Pop-art legs in fishnet stockings and high heels on a teal blue background",
+          "thumbPattern": "/drops/ny-drop-1/thumbs/patterns/indica.jpg",
+          "thumbColor": "/drops/ny-drop-1/thumbs/colors/indica.jpg",
+          "fingerprint": {
+            "dominantColor": [230, 48, 47],
+            "dominantColorAlt": [46, 124, 140],
+            "phashPattern": "0011110110111001011110101011011010111001001110010111101010110100",
+            "phashColor": "0000010000000000100001000010110001100100011000000111101010011101",
+            "gridPattern": [101,101,103,102,102,102,101,103,102,101,102,102,102,101,101,102,101,102,102,102,102,101,102,101,102,101,102,103,101,102,102,101,102,101,103,102,102,101,101,103,101,101,102,102,102,101,101,102,101,102,102,102,102,101,102,101,102,101,102,102,101,102,101,101],
+            "gridColor": [91,88,99,81,94,107,78,83,97,98,102,83,92,89,99,85,103,92,84,95,95,128,96,94,86,92,105,98,111,157,102,83,93,118,166,99,98,130,73,63,99,113,119,93,100,102,87,83,99,107,106,118,138,100,105,101,104,97,99,144,185,142,92,105]
+          }
+        },
+        "sativa": {
+          "patternName": "Sunglass Girls",
+          "patternDescription": "Pop-art women wearing stylish sunglasses, vibrant retro illustration",
+          "thumbPattern": "/drops/ny-drop-1/thumbs/patterns/sativa.jpg",
+          "thumbColor": "/drops/ny-drop-1/thumbs/colors/sativa.jpg",
+          "fingerprint": {
+            "dominantColor": [248, 174, 21],
+            "dominantColorAlt": [164, 116, 116],
+            "phashPattern": "0010110100111001011110101011110000101001001110011111101010110100",
+            "phashColor": "0010111100111000010110000011100001110000001110000011100011111101",
+            "gridPattern": [178,178,180,178,179,179,178,180,178,178,179,179,179,178,178,179,178,179,179,179,179,178,179,178,179,178,179,179,179,179,178,178,178,178,179,178,179,178,177,179,178,178,179,179,179,178,178,179,179,179,179,179,179,178,179,178,179,178,179,179,178,179,178,178],
+            "gridColor": [89,103,146,123,136,146,169,171,96,105,132,144,144,120,120,99,119,131,121,151,146,102,104,105,127,129,154,179,148,108,119,109,99,135,160,176,124,90,117,87,64,73,139,186,157,103,100,87,123,122,172,184,159,125,99,111,170,175,188,190,149,136,122,153]
+          }
+        },
+        "hybrid": {
+          "patternName": "Luchador Masks",
+          "patternDescription": "Colorful Mexican wrestling masks in pop-art style with action burst graphics",
+          "thumbPattern": "/drops/ny-drop-1/thumbs/patterns/hybrid.jpg",
+          "thumbColor": "/drops/ny-drop-1/thumbs/colors/hybrid.jpg",
+          "fingerprint": {
+            "dominantColor": [45, 48, 141],
+            "dominantColorAlt": [146, 132, 92],
+            "phashPattern": "0011110110010000001110100001111010111001001100010111101010100100",
+            "phashColor": "0111110011001111110111011000001111001001110000011100000001111000",
+            "gridPattern": [57,57,58,58,58,58,57,58,58,57,57,58,57,57,57,57,57,57,58,58,58,57,58,57,57,57,57,58,58,58,58,57,58,57,58,58,58,57,57,58,57,57,58,58,57,57,57,58,57,58,58,58,58,57,58,57,58,57,58,57,57,58,57,57],
+            "gridColor": [131,138,154,134,185,164,110,101,143,157,122,118,187,157,150,148,174,135,106,134,170,138,110,136,189,120,106,123,108,132,133,157,217,142,112,127,134,129,106,173,145,136,102,103,126,101,107,153,139,143,116,112,117,85,80,89,107,156,151,136,207,120,63,62]
+          }
+        }
+      }
+    }
+  }
+}
