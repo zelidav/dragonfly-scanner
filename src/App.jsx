@@ -111,115 +111,6 @@ const fuzzyMatch = (ocrText, strainNames) => {
   return bestScore >= 5 ? bestMatch : null;
 };
 
-// --- Drop Pattern Fingerprinting (client-side) ---
-function extractFingerprint(imageElement) {
-  const canvas = document.createElement("canvas");
-  const ctx = canvas.getContext("2d");
-
-  // Dominant color: 4x4 sample
-  canvas.width = 4; canvas.height = 4;
-  ctx.drawImage(imageElement, 0, 0, 4, 4);
-  const colorData = ctx.getImageData(0, 0, 4, 4).data;
-  let rSum = 0, gSum = 0, bSum = 0;
-  for (let i = 0; i < 16; i++) {
-    rSum += colorData[i * 4];
-    gSum += colorData[i * 4 + 1];
-    bSum += colorData[i * 4 + 2];
-  }
-  const dominantColor = [Math.round(rSum/16), Math.round(gSum/16), Math.round(bSum/16)];
-
-  // 8x8 luminance grid
-  canvas.width = 8; canvas.height = 8;
-  ctx.drawImage(imageElement, 0, 0, 8, 8);
-  const gridData = ctx.getImageData(0, 0, 8, 8).data;
-  const grid = [];
-  for (let i = 0; i < 64; i++) {
-    const r = gridData[i * 4], g = gridData[i * 4 + 1], b = gridData[i * 4 + 2];
-    grid.push(Math.round(0.299 * r + 0.587 * g + 0.114 * b));
-  }
-
-  // Perceptual hash
-  const mean = grid.reduce((a,b) => a+b, 0) / grid.length;
-  const phash = grid.map(v => v >= mean ? 1 : 0).join("");
-
-  return { dominantColor, grid, phash };
-}
-
-function colorDistance(c1, c2) {
-  return Math.sqrt((c1[0]-c2[0])**2 + (c1[1]-c2[1])**2 + (c1[2]-c2[2])**2);
-}
-
-function hammingDistance(h1, h2) {
-  let d = 0;
-  for (let i = 0; i < h1.length && i < h2.length; i++) {
-    if (h1[i] !== h2[i]) d++;
-  }
-  return d;
-}
-
-function gridCorrelation(g1, g2) {
-  if (g1.length !== g2.length) return 0;
-  const n = g1.length;
-  const mean1 = g1.reduce((a,b) => a+b, 0) / n;
-  const mean2 = g2.reduce((a,b) => a+b, 0) / n;
-  let num = 0, den1 = 0, den2 = 0;
-  for (let i = 0; i < n; i++) {
-    const d1 = g1[i] - mean1, d2 = g2[i] - mean2;
-    num += d1 * d2;
-    den1 += d1 * d1;
-    den2 += d2 * d2;
-  }
-  return den1 && den2 ? num / Math.sqrt(den1 * den2) : 0;
-}
-
-function matchDrop(fingerprint, dropsData) {
-  let bestMatch = null;
-  let bestScore = 0;
-
-  for (const [dropId, drop] of Object.entries(dropsData.drops || {})) {
-    for (const [typeName, typeData] of Object.entries(drop.types || {})) {
-      const fp = typeData.fingerprint;
-      if (!fp) continue;
-
-      // Score against pattern fingerprint
-      let score = 0;
-      const patColorDist = colorDistance(fingerprint.dominantColor, fp.dominantColor);
-      if (patColorDist < 50) score += (50 - patColorDist) * 2; // max 100 points for color match
-
-      if (fp.phashPattern) {
-        const hamming = hammingDistance(fingerprint.phash, fp.phashPattern);
-        score += Math.max(0, (32 - hamming)) * 2; // max 64 points for hash match
-      }
-
-      if (fp.gridPattern) {
-        const corr = gridCorrelation(fingerprint.grid, fp.gridPattern);
-        score += Math.max(0, corr * 50); // max 50 for grid correlation
-      }
-
-      // Also score against color/illustration fingerprint
-      if (fp.dominantColorAlt) {
-        const altColorDist = colorDistance(fingerprint.dominantColor, fp.dominantColorAlt);
-        if (altColorDist < patColorDist && altColorDist < 50) {
-          score += (50 - altColorDist) * 1.5;
-        }
-      }
-
-      if (fp.phashColor) {
-        const hamming2 = hammingDistance(fingerprint.phash, fp.phashColor);
-        score += Math.max(0, (32 - hamming2));
-      }
-
-      if (score > bestScore) {
-        bestScore = score;
-        bestMatch = { dropId, drop, typeName, typeData, score };
-      }
-    }
-  }
-
-  // Require minimum score threshold
-  return bestScore > 60 ? bestMatch : null;
-}
-
 // --- Dragonfly Strain Database ---------------------------------------------
 const STRAIN_DB = {
   // Prerolls
@@ -336,20 +227,12 @@ export default function DragonflyScanner() {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const fileInputRef = useRef(null);
-  const [dropsData, setDropsData] = useState(null);
-  const [dropMatch, setDropMatch] = useState(null);
-
   // Load Google Fonts
   useEffect(() => {
     const link = document.createElement("link");
     link.href = "https://fonts.googleapis.com/css2?family=Oswald:wght@300;400;500;600;700&family=DM+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap";
     link.rel = "stylesheet";
     document.head.appendChild(link);
-  }, []);
-
-  // Fetch drop fingerprint data for client-side pattern matching
-  useEffect(() => {
-    fetch("/api/drops").then(r => r.json()).then(setDropsData).catch(() => {});
   }, []);
 
   const strainNames = Object.keys(STRAIN_DB);
@@ -454,20 +337,6 @@ export default function DragonflyScanner() {
       const base64 = resized.split(",")[1];
       const mediaType = resized.startsWith("data:image/png") ? "image/png" : "image/jpeg";
 
-      // Also try client-side drop pattern matching (no API call)
-      if (dropsData) {
-        const fpImg = new Image();
-        fpImg.onload = () => {
-          try {
-            const fp = extractFingerprint(fpImg);
-            const match = matchDrop(fp, dropsData);
-            setDropMatch(match);
-            if (match) console.log("Drop match:", match.drop.name, match.typeName, "score:", match.score);
-          } catch (e) { console.warn("Drop fingerprint error:", e); }
-        };
-        fpImg.src = resized;
-      }
-      
       setScanProgress(30);
       setScanStatus("AI analyzing product...");
       
@@ -553,7 +422,7 @@ export default function DragonflyScanner() {
         setScanStatus("");
       }, 4000);
     }
-  }, [strainNames, stopCamera, dropsData]);
+  }, [strainNames, stopCamera]);
 
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
@@ -570,7 +439,6 @@ export default function DragonflyScanner() {
     stopCamera();
     setScreen("home");
     setScannedStrain(null);
-    setDropMatch(null);
     setSearchQuery("");
     setShowSearch(false);
     setScanning(false);
@@ -1484,84 +1352,6 @@ export default function DragonflyScanner() {
           <h1 style={styles.strainName}>{scannedStrain}</h1>
           <div style={styles.strainCategory}>{s.category} - THC {s.thc}</div>
         </div>
-
-        {/* Drop / Pattern Match */}
-        {dropMatch && (
-          <div style={{
-            background: `linear-gradient(135deg, ${COLORS.bgCard}, ${COLORS.bg})`,
-            border: `1px solid ${COLORS.accent}44`,
-            borderRadius: 16,
-            padding: 20,
-            marginBottom: 20,
-          }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-              <div style={{
-                width: 8, height: 8, borderRadius: "50%",
-                background: COLORS.accent, boxShadow: `0 0 8px ${COLORS.accent}`,
-              }} />
-              <div style={{
-                fontFamily: FONTS.display, fontSize: 14, fontWeight: 600,
-                color: COLORS.accent, textTransform: "uppercase", letterSpacing: 1,
-              }}>
-                Drop Identified
-              </div>
-            </div>
-            <div style={{
-              fontFamily: FONTS.display, fontSize: 22, fontWeight: 700,
-              color: COLORS.text, marginBottom: 4,
-            }}>
-              {dropMatch.drop.name || dropMatch.dropId}
-            </div>
-            <div style={{
-              fontFamily: FONTS.body, fontSize: 14, color: COLORS.textDim, marginBottom: 12,
-            }}>
-              {dropMatch.typeName}
-            </div>
-            {/* Thumbnails */}
-            <div style={{ display: "flex", gap: 12, marginBottom: 12 }}>
-              {dropMatch.typeData.patternImage && (
-                <div style={{
-                  width: 72, height: 72, borderRadius: 10, overflow: "hidden",
-                  border: `1px solid ${COLORS.borderLight}`, background: COLORS.bgCard,
-                }}>
-                  <img src={dropMatch.typeData.patternImage} alt="Pattern"
-                    style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                    onError={(e) => { e.target.style.display = "none"; }} />
-                </div>
-              )}
-              {dropMatch.typeData.colorImage && (
-                <div style={{
-                  width: 72, height: 72, borderRadius: 10, overflow: "hidden",
-                  border: `1px solid ${COLORS.borderLight}`, background: COLORS.bgCard,
-                }}>
-                  <img src={dropMatch.typeData.colorImage} alt="Color"
-                    style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                    onError={(e) => { e.target.style.display = "none"; }} />
-                </div>
-              )}
-            </div>
-            {dropMatch.drop.description && (
-              <p style={{
-                fontFamily: FONTS.body, fontSize: 13, color: COLORS.textMuted,
-                lineHeight: 1.5, margin: "0 0 8px",
-              }}>
-                {dropMatch.drop.description}
-              </p>
-            )}
-            <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-              {dropMatch.drop.region && (
-                <div style={{ fontFamily: FONTS.mono, fontSize: 11, color: COLORS.textDim }}>
-                  Region: {dropMatch.drop.region}
-                </div>
-              )}
-              {dropMatch.drop.date && (
-                <div style={{ fontFamily: FONTS.mono, fontSize: 11, color: COLORS.textDim }}>
-                  Date: {dropMatch.drop.date}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
 
         {/* Quick Stats */}
         <div style={styles.infoSection}>

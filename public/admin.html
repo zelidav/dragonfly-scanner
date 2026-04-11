@@ -147,12 +147,6 @@
     .tabs { padding: 0 12px; }
     .tab { padding: 12px 14px; font-size: 13px; }
     .stat-card .value { font-size: 28px; }
-    .drop-type-fields { grid-template-columns: 1fr; }
-    .drop-uploads { grid-template-columns: 1fr; }
-    .drop-card { padding: 14px; }
-    .drop-type-section { padding: 12px; }
-    .drop-card-header { flex-direction: column; gap: 8px; }
-    .drop-type-header { flex-wrap: wrap; }
   }
 
   /* Loading spinner */
@@ -164,33 +158,6 @@
   .toast.error { border-color: var(--error); color: var(--error); }
   @keyframes slideIn { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 
-  /* Drops */
-  .drop-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 16px; }
-  .drop-card-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 16px; }
-  .drop-card-header h3 { font-family: 'Oswald', sans-serif; font-size: 20px; color: var(--accent); }
-  .drop-card-header .drop-meta { color: var(--text-muted); font-size: 13px; margin-top: 4px; }
-  .drop-card-actions { display: flex; gap: 8px; }
-  .drop-types { display: flex; flex-direction: column; gap: 16px; }
-  .drop-type-section { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
-  .drop-type-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
-  .drop-type-header h4 { font-family: 'Oswald', sans-serif; font-size: 15px; text-transform: uppercase; letter-spacing: 0.5px; }
-  .drop-type-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
-  .drop-type-fields .form-group { margin-bottom: 0; }
-  .drop-uploads { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-  .drop-upload-area { border: 1px dashed var(--border-light); border-radius: 8px; padding: 14px; text-align: center; }
-  .drop-upload-area label { font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; display: block; }
-  .drop-upload-area input[type="file"] { display: none; }
-  .drop-upload-trigger { display: inline-block; padding: 6px 14px; background: var(--bg-card); border: 1px solid var(--border-light); border-radius: 6px; color: var(--text-muted); font-size: 12px; cursor: pointer; transition: all 0.2s; }
-  .drop-upload-trigger:hover { border-color: var(--accent); color: var(--accent); }
-  .drop-upload-preview { margin-top: 8px; }
-  .drop-upload-preview img { max-width: 100%; max-height: 80px; border-radius: 6px; border: 1px solid var(--border); }
-  .fingerprint-display { display: flex; align-items: center; gap: 10px; margin-top: 8px; padding: 8px; background: var(--bg-card); border-radius: 6px; font-size: 12px; }
-  .fingerprint-color { width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--border-light); flex-shrink: 0; }
-  .phash-grid { display: grid; grid-template-columns: repeat(8, 6px); grid-template-rows: repeat(8, 6px); gap: 1px; flex-shrink: 0; }
-  .phash-cell { width: 6px; height: 6px; border-radius: 1px; }
-  .drop-thumbs { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
-  .drop-thumbs img { width: 36px; height: 36px; border-radius: 4px; object-fit: cover; border: 1px solid var(--border); }
-  .add-type-bar { margin-top: 12px; display: flex; gap: 8px; }
 </style>
 </head>
 <body>
@@ -218,7 +185,6 @@
   <div class="tabs">
     <div class="tab active" data-tab="dashboard" onclick="switchTab('dashboard')">Dashboard</div>
     <div class="tab" data-tab="products" onclick="switchTab('products')">Products</div>
-    <div class="tab" data-tab="drops" onclick="switchTab('drops')">Drops</div>
     <div class="tab" data-tab="scraper" onclick="switchTab('scraper')">Scraper</div>
     <div class="tab" data-tab="settings" onclick="switchTab('settings')">Settings</div>
   </div>
@@ -293,50 +259,6 @@
           <tbody id="productTable"></tbody>
         </table>
       </div>
-    </div>
-
-    <!-- Drops -->
-    <div id="panel-drops" class="panel">
-      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px;">
-        <h3 style="font-family: 'Oswald', sans-serif; font-size: 18px; text-transform: uppercase; letter-spacing: 1px;">Drop Management</h3>
-        <button class="btn" onclick="toggleCreateDrop()">+ New Drop</button>
-      </div>
-
-      <!-- Create Drop Form (hidden by default) -->
-      <div id="createDropForm" style="display:none; background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin-bottom: 24px;">
-        <h3 style="font-family: 'Oswald', sans-serif; font-size: 16px; color: var(--accent); margin-bottom: 16px;">Create New Drop</h3>
-        <div class="form-row">
-          <div class="form-group">
-            <label>Name</label>
-            <input type="text" id="dropName" placeholder="e.g. NY 2026 Drop 1" oninput="autoSlug()">
-          </div>
-          <div class="form-group">
-            <label>ID (slug)</label>
-            <input type="text" id="dropId" placeholder="auto-generated-from-name">
-          </div>
-        </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label>Region</label>
-            <input type="text" id="dropRegion" placeholder="e.g. New York">
-          </div>
-          <div class="form-group">
-            <label>Date</label>
-            <input type="date" id="dropDate">
-          </div>
-        </div>
-        <div class="form-group">
-          <label>Description</label>
-          <textarea id="dropDescription" placeholder="Drop description..."></textarea>
-        </div>
-        <div class="form-actions">
-          <button class="btn btn-outline" onclick="toggleCreateDrop()">Cancel</button>
-          <button class="btn" onclick="createDrop()">Create Drop</button>
-        </div>
-      </div>
-
-      <!-- Drop List -->
-      <div id="dropsList"></div>
     </div>
 
     <!-- Scraper -->
@@ -492,7 +414,6 @@ function switchTab(tab) {
   document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + tab));
   if (tab === 'dashboard') loadDashboard();
   if (tab === 'products') loadProducts();
-  if (tab === 'drops') loadDrops();
   if (tab === 'scraper') loadScrapeSites();
   if (tab === 'settings') loadSettings();
 }
@@ -894,296 +815,6 @@ function toast(msg, isError) {
   setTimeout(() => el.remove(), 3000);
 }
 
-// --- Drops ---
-let dropsData = [];
-
-function toggleCreateDrop() {
-  const form = document.getElementById('createDropForm');
-  form.style.display = form.style.display === 'none' ? 'block' : 'none';
-  if (form.style.display === 'block') {
-    document.getElementById('dropName').value = '';
-    document.getElementById('dropId').value = '';
-    document.getElementById('dropRegion').value = '';
-    document.getElementById('dropDate').value = '';
-    document.getElementById('dropDescription').value = '';
-  }
-}
-
-function autoSlug() {
-  const name = document.getElementById('dropName').value;
-  document.getElementById('dropId').value = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-}
-
-async function loadDrops() {
-  try {
-    const r = await fetch(`${API}/api/admin/drops?key=${encodeURIComponent(adminKey)}`);
-    if (!r.ok) {
-      document.getElementById('dropsList').innerHTML = '<div style="color: var(--text-dim); text-align: center; padding: 40px;">Could not load drops</div>';
-      return;
-    }
-    dropsData = await r.json();
-    renderDrops();
-  } catch (e) {
-    document.getElementById('dropsList').innerHTML = '<div style="color: var(--text-dim); text-align: center; padding: 40px;">Network error loading drops</div>';
-  }
-}
-
-function renderDrops() {
-  const container = document.getElementById('dropsList');
-  const drops = dropsData.drops || {};
-  const dropIds = Object.keys(drops);
-
-  if (dropIds.length === 0) {
-    container.innerHTML = '<div style="color: var(--text-dim); text-align: center; padding: 40px;">No drops yet. Create one to get started.</div>';
-    return;
-  }
-
-  container.innerHTML = dropIds.map(dropId => {
-    const drop = drops[dropId];
-    const types = drop.types || {};
-    const typeNames = ['indica', 'sativa', 'hybrid'];
-    const existingTypes = Object.keys(types);
-    const missingTypes = typeNames.filter(t => !existingTypes.includes(t));
-
-    const typeSections = existingTypes.map(typeName => {
-      const t = types[typeName];
-      const typeColor = typeName === 'indica' ? 'var(--indica)' : typeName === 'sativa' ? 'var(--sativa)' : 'var(--hybrid)';
-      const badgeClass = 'badge-' + typeName;
-
-      const patternThumb = t.thumbPattern ? `<img src="${esc(t.thumbPattern)}" alt="pattern" style="max-width:100%;border-radius:6px;">` : '<span style="color:var(--text-dim)">No pattern</span>';
-      const colorThumb = t.thumbColor ? `<img src="${esc(t.thumbColor)}" alt="color" style="max-width:100%;border-radius:6px;">` : '<span style="color:var(--text-dim)">No color</span>';
-
-      const fp = t.fingerprint || {};
-      const patternFingerprint = fp.dominantColor ? renderFingerprint({ dominantColor: fp.dominantColor, phash: fp.phashPattern }) : '';
-      const colorFingerprint = fp.dominantColorAlt ? renderFingerprint({ dominantColor: fp.dominantColorAlt, phash: fp.phashColor }) : '';
-
-      return `<div class="drop-type-section">
-        <div class="drop-type-header">
-          <span class="badge ${badgeClass}">${typeName}</span>
-          <h4 style="color:${typeColor}">${esc(t.patternName || typeName + ' pattern')}</h4>
-          <span style="color:var(--text-dim);font-size:12px;margin-left:8px;">${esc(t.patternDescription || '')}</span>
-        </div>
-        <div class="drop-type-fields">
-          <div class="form-group">
-            <label>Pattern Name</label>
-            <input type="text" value="${esc(t.patternName || '')}" placeholder="e.g. Midnight Swirl" onchange="updateDropType('${esc(dropId)}','${typeName}','patternName',this.value)">
-          </div>
-          <div class="form-group">
-            <label>Description</label>
-            <input type="text" value="${esc(t.patternDescription || '')}" placeholder="Pattern description" onchange="updateDropType('${esc(dropId)}','${typeName}','patternDescription',this.value)">
-          </div>
-        </div>
-        <div class="drop-uploads">
-          <div class="drop-upload-area">
-            <label>Pattern Image</label>
-            <div class="drop-upload-preview" id="preview-${dropId}-${typeName}-pattern">${patternThumb}</div>
-            <input type="file" id="file-${dropId}-${typeName}-pattern" accept="image/*" onchange="previewDropFile(this,'${dropId}','${typeName}','pattern')">
-            <span class="drop-upload-trigger" onclick="document.getElementById('file-${dropId}-${typeName}-pattern').click()">Choose File</span>
-            <button class="btn btn-sm" style="margin-top:6px;" onclick="uploadDropImage('${esc(dropId)}','${typeName}','patterns')">Upload &amp; Fingerprint</button>
-            ${patternFingerprint}
-          </div>
-          <div class="drop-upload-area">
-            <label>Color Image</label>
-            <div class="drop-upload-preview" id="preview-${dropId}-${typeName}-color">${colorThumb}</div>
-            <input type="file" id="file-${dropId}-${typeName}-color" accept="image/*" onchange="previewDropFile(this,'${dropId}','${typeName}','color')">
-            <span class="drop-upload-trigger" onclick="document.getElementById('file-${dropId}-${typeName}-color').click()">Choose File</span>
-            <button class="btn btn-sm" style="margin-top:6px;" onclick="uploadDropImage('${esc(dropId)}','${typeName}','colors')">Upload &amp; Fingerprint</button>
-            ${colorFingerprint}
-          </div>
-        </div>
-      </div>`;
-    }).join('');
-
-    const addTypeButtons = missingTypes.map(t => {
-      const badgeClass = 'badge-' + t;
-      return `<button class="btn btn-outline btn-sm" onclick="addDropType('${esc(dropId)}','${t}')"><span class="badge ${badgeClass}" style="margin-right:4px;">${t}</span> Add</button>`;
-    }).join('');
-
-    return `<div class="drop-card">
-      <div class="drop-card-header">
-        <div>
-          <h3>${esc(drop.name)}</h3>
-          <div class="drop-meta">${esc(drop.region || '')}${drop.region && drop.date ? ' &middot; ' : ''}${esc(drop.date || '')}${drop.description ? '<br>' + esc(drop.description) : ''}</div>
-        </div>
-        <div class="drop-card-actions">
-          <button class="btn btn-outline btn-sm" onclick="editDropMeta('${esc(dropId)}')">Edit</button>
-          <button class="btn btn-danger btn-sm" onclick="deleteDrop('${esc(dropId)}')">Delete</button>
-        </div>
-      </div>
-      <div class="drop-types">${typeSections}</div>
-      ${missingTypes.length > 0 ? `<div class="add-type-bar">${addTypeButtons}</div>` : ''}
-    </div>`;
-  }).join('');
-}
-
-function renderFingerprint(fp) {
-  if (!fp) return '';
-  let html = '<div class="fingerprint-display">';
-  if (fp.dominantColor) {
-    const c = Array.isArray(fp.dominantColor) ? fp.dominantColor : [128,128,128];
-    const cssColor = `rgb(${c[0]},${c[1]},${c[2]})`;
-    html += `<div class="fingerprint-color" style="background:${cssColor}" title="RGB: ${c.join(', ')}"></div>`;
-    html += `<span style="color:var(--text-dim);font-size:11px;">rgb(${c.join(', ')})</span>`;
-  }
-  if (fp.phash) {
-    html += renderPhashGrid(fp.phash);
-  }
-  html += '</div>';
-  return html;
-}
-
-function renderPhashGrid(phash) {
-  let grid = '<div class="phash-grid" title="pHash">';
-  for (let i = 0; i < 64 && i < phash.length; i++) {
-    const on = phash[i] === '1';
-    grid += `<div class="phash-cell" style="background:${on ? 'var(--accent)' : 'var(--bg)'}"></div>`;
-  }
-  grid += '</div>';
-  return grid;
-}
-
-function previewDropFile(input, dropId, typeName, imageType) {
-  const file = input.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = function(e) {
-    const preview = document.getElementById(`preview-${dropId}-${typeName}-${imageType}`);
-    preview.innerHTML = `<img src="${e.target.result}" alt="preview">`;
-  };
-  reader.readAsDataURL(file);
-}
-
-async function uploadDropImage(dropId, typeName, endpoint) {
-  // endpoint is 'patterns' or 'colors'
-  const imageType = endpoint === 'patterns' ? 'pattern' : 'color';
-  const fileInput = document.getElementById(`file-${dropId}-${typeName}-${imageType}`);
-  if (!fileInput.files[0]) {
-    toast('Please select a file first', true);
-    return;
-  }
-
-  const file = fileInput.files[0];
-  const reader = new FileReader();
-  reader.onload = async function(e) {
-    const base64 = e.target.result.split(',')[1];
-    try {
-      const r = await fetch(`${API}/api/admin/drops/${encodeURIComponent(dropId)}/upload/${encodeURIComponent(typeName)}/${endpoint}?key=${encodeURIComponent(adminKey)}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image_base64: base64 })
-      });
-      if (r.ok) {
-        const data = await r.json();
-        toast('Uploaded & fingerprinted');
-        loadDrops();
-      } else {
-        const err = await r.json().catch(() => ({}));
-        toast(err.error || 'Upload failed', true);
-      }
-    } catch (e) {
-      toast('Network error', true);
-    }
-  };
-  reader.readAsDataURL(file);
-}
-
-async function createDrop() {
-  const name = document.getElementById('dropName').value.trim();
-  const id = document.getElementById('dropId').value.trim();
-  const region = document.getElementById('dropRegion').value.trim();
-  const date = document.getElementById('dropDate').value;
-  const description = document.getElementById('dropDescription').value.trim();
-
-  if (!name) { toast('Drop name is required', true); return; }
-  if (!id) { toast('Drop ID is required', true); return; }
-
-  try {
-    const r = await fetch(`${API}/api/admin/drops?key=${encodeURIComponent(adminKey)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, name, region, date, description })
-    });
-    if (r.ok) {
-      toast('Drop created');
-      toggleCreateDrop();
-      loadDrops();
-    } else {
-      const err = await r.json().catch(() => ({}));
-      toast(err.error || 'Create failed', true);
-    }
-  } catch (e) {
-    toast('Network error', true);
-  }
-}
-
-async function deleteDrop(dropId) {
-  if (!confirm(`Delete drop "${dropId}"? This cannot be undone.`)) return;
-  try {
-    const r = await fetch(`${API}/api/admin/drops/${encodeURIComponent(dropId)}?key=${encodeURIComponent(adminKey)}`, { method: 'DELETE' });
-    if (r.ok) {
-      toast('Drop deleted');
-      loadDrops();
-    } else {
-      toast('Delete failed', true);
-    }
-  } catch (e) {
-    toast('Network error', true);
-  }
-}
-
-async function addDropType(dropId, typeName) {
-  try {
-    const r = await fetch(`${API}/api/admin/drops/${encodeURIComponent(dropId)}/types/${encodeURIComponent(typeName)}?key=${encodeURIComponent(adminKey)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ patternName: '', description: '' })
-    });
-    if (r.ok) {
-      toast(`Added ${typeName} type`);
-      loadDrops();
-    } else {
-      const err = await r.json().catch(() => ({}));
-      toast(err.error || 'Failed to add type', true);
-    }
-  } catch (e) {
-    toast('Network error', true);
-  }
-}
-
-async function updateDropType(dropId, typeName, field, value) {
-  try {
-    await fetch(`${API}/api/admin/drops/${encodeURIComponent(dropId)}/types/${encodeURIComponent(typeName)}?key=${encodeURIComponent(adminKey)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ [field]: value })
-    });
-  } catch (e) {
-    // silent update
-  }
-}
-
-function editDropMeta(dropId) {
-  const drop = (dropsData.drops || {})[dropId];
-  if (!drop) return;
-
-  const name = prompt('Drop name:', drop.name);
-  if (name === null) return;
-  const region = prompt('Region:', drop.region || '');
-  if (region === null) return;
-  const date = prompt('Date (YYYY-MM-DD):', drop.date || '');
-  if (date === null) return;
-  const description = prompt('Description:', drop.description || '');
-  if (description === null) return;
-
-  fetch(`${API}/api/admin/drops/${encodeURIComponent(dropId)}?key=${encodeURIComponent(adminKey)}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, region, date, description })
-  }).then(r => {
-    if (r.ok) { toast('Drop updated'); loadDrops(); }
-    else toast('Update failed', true);
-  }).catch(() => toast('Network error', true));
-}
 
 // --- Init ---
 if (adminKey) {
