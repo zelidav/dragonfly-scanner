@@ -376,53 +376,74 @@ export default function DragonflyScanner() {
       let matched = null;
 
       // Category mapping from label text to STRAIN_DB category values
-      const categoryMap = {
-        "PREROLL": "Preroll 1g", "PRE-ROLL": "Preroll 1g", "PRE ROLL": "Preroll 1g",
-        "INFUSED": "Infused Preroll 1.25g", "INFUSED PREROLL": "Infused Preroll 1.25g",
-        "FLOWER": "Flower 3.5g",
-        "1 OZ": "1oz Premium Flower", "PREMIUM OUNCE": "1oz Premium Flower", "28G": "1oz Premium Flower",
-        "VAPE": "Vape", "CART": "Vape", "CARTRIDGE": "Vape", "ALL-IN-ONE": "Vape", "AIO": "Vape",
-        "14 PACK": "14 Pack Prerolls", "14-PACK": "14 Pack Prerolls",
-        "GUMMY": "Gummies", "GUMMIES": "Gummies", "EDIBLE": "Gummies",
-      };
+      // Fuzzy category matching -- check if the product type text contains any keyword
+      const categoryKeywords = [
+        { keywords: ["DISPOSABLE", "VAPORIZER", "VAPE", "CART", "CARTRIDGE", "ALL-IN-ONE", "AIO", "510", "POD"], category: "Vape" },
+        { keywords: ["INFUSED"], category: "Infused Preroll 1.25g" },
+        { keywords: ["PREROLL", "PRE-ROLL", "PRE ROLL", "JOINT"], category: "Preroll 1g" },
+        { keywords: ["FLOWER", "3.5"], category: "Flower 3.5g" },
+        { keywords: ["1 OZ", "PREMIUM OUNCE", "28G", "OUNCE"], category: "1oz Premium Flower" },
+        { keywords: ["14 PACK", "14-PACK", "14PK"], category: "14 Pack Prerolls" },
+        { keywords: ["GUMMY", "GUMMIES", "EDIBLE"], category: "Gummies" },
+      ];
 
-      const expectedCategory = categoryMap[aiProductType] || null;
+      let expectedCategory = null;
+      const ptUpper = aiProductType.toUpperCase();
+      for (const { keywords, category } of categoryKeywords) {
+        if (keywords.some(kw => ptUpper.includes(kw))) {
+          expectedCategory = category;
+          break;
+        }
+      }
 
       // Try exact strain match with category disambiguation
       if (aiStrain !== "UNKNOWN") {
-        // First: try exact name + matching category
+        const aiLower = aiStrain.toLowerCase();
+
+        // When we have a confident product type from the label, ONLY match that category
+        // This prevents "Watermelon Skittlez VAPE" from matching the Infused Preroll entry
         if (expectedCategory) {
+          // Exact name + correct category
           for (const name of strainNames) {
-            if (name.toLowerCase() === aiStrain.toLowerCase() && STRAIN_DB[name]?.category === expectedCategory) {
+            if (name.toLowerCase() === aiLower && STRAIN_DB[name]?.category === expectedCategory) {
               matched = name;
               break;
             }
           }
-        }
-        // Second: try exact name (any category)
-        if (!matched && STRAIN_DB[aiStrain]) {
-          matched = aiStrain;
-        }
-        // Third: fuzzy match with category preference
-        if (!matched) {
-          const aiLower = aiStrain.toLowerCase();
-          // Case-insensitive exact
-          for (const name of strainNames) {
-            if (name.toLowerCase() === aiLower) {
-              if (!expectedCategory || STRAIN_DB[name]?.category === expectedCategory) { matched = name; break; }
-              if (!matched) matched = name; // fallback without category match
-            }
-          }
-          // Substring match
+          // Fuzzy name + correct category
           if (!matched) {
             for (const name of strainNames) {
+              if (STRAIN_DB[name]?.category !== expectedCategory) continue;
               if (aiLower.includes(name.toLowerCase()) || name.toLowerCase().includes(aiLower)) {
-                if (!expectedCategory || STRAIN_DB[name]?.category === expectedCategory) { matched = name; break; }
-                if (!matched) matched = name;
+                matched = name;
+                break;
               }
             }
           }
-          // Edit distance
+          // Edit distance within correct category only
+          if (!matched) {
+            const categoryStrains = strainNames.filter(n => STRAIN_DB[n]?.category === expectedCategory);
+            if (categoryStrains.length > 0) {
+              matched = fuzzyMatch(aiStrain, categoryStrains);
+            }
+          }
+          // If still no match with correct category, this strain+category combo isn't in DB
+          // Let it fall through to labelRead (don't match wrong category)
+        } else {
+          // No category info from label -- match any category
+          if (STRAIN_DB[aiStrain]) {
+            matched = aiStrain;
+          }
+          if (!matched) {
+            for (const name of strainNames) {
+              if (name.toLowerCase() === aiLower) { matched = name; break; }
+            }
+          }
+          if (!matched) {
+            for (const name of strainNames) {
+              if (aiLower.includes(name.toLowerCase()) || name.toLowerCase().includes(aiLower)) { matched = name; break; }
+            }
+          }
           if (!matched) {
             matched = fuzzyMatch(aiStrain, strainNames);
           }
