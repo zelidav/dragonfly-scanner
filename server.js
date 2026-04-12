@@ -136,6 +136,7 @@ Write a short witty one-liner ("roast") as a sarcastic budtender who loves Drago
 - Non-cannabis: joke about them scanning random stuff
 - Competitor weed: playful shade, suggest Dragonfly is better
 - Dragonfly product: genuine compliment
+- Inappropriate/NSFW/weird stuff: threaten to send it to their mom. Examples: "Bold move scanning that. Should I forward this to your mom or...?" or "Screenshot saved. Your mother will hear about this." Keep it PG-rated sarcasm, don't describe what you see.
 
 Respond ONLY with valid JSON:
 {"strain": "strain/flavor name from label", "product_type": "product type from label", "thc": "THC% or null", "brand": "brand name or null", "weight": "net weight or null", "all_text": "other text on label", "is_cannabis": true/false, "is_dragonfly": true/false, "roast": "your witty one-liner"}`
