@@ -435,9 +435,10 @@ export default function DragonflyScanner() {
 
       setScanProgress(90);
 
-      // Use AI's own brand detection
-      const isDragonfly = aiIsDragonfly || aiBrand.includes("dragonfly");
-      const isOtherBrand = !isDragonfly && (aiBrand || !aiIsCannabis);
+      // Use AI's brand detection + check OCR text for dragonfly mentions
+      const allTextLower = (aiAllText || "").toLowerCase();
+      const isDragonfly = aiIsDragonfly || aiBrand.includes("dragonfly") || allTextLower.includes("dragonfly");
+      const isOtherBrand = !isDragonfly && !aiIsCannabis ? true : !isDragonfly && !!aiBrand && aiBrand !== "unknown" && aiBrand !== "null";
 
       // Match the AI response against our strain database
       let matched = null;
