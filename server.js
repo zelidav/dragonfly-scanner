@@ -2,8 +2,98 @@ const express = require("express");
 const cors = require("cors");
 const path = require("path");
 const fs = require("fs");
+const crypto = require("crypto");
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+// --- GCS write-through persistence -----------------------------------------
+// Opt-in: set GCS_BUCKET to enable. Without it, server runs with local-only files.
+// On startup, hydrate local files from GCS. On each save, debounce-upload to GCS.
+const GCS_BUCKET = process.env.GCS_BUCKET;
+const GCS_PREFIX = process.env.GCS_PREFIX || "dragonfly/";
+const UPLOAD_DEBOUNCE_MS = 2000;
+
+let gcsBucket = null;
+if (GCS_BUCKET) {
+  try {
+    const { Storage } = require("@google-cloud/storage");
+    gcsBucket = new Storage().bucket(GCS_BUCKET);
+    console.log(`GCS persistence: gs://${GCS_BUCKET}/${GCS_PREFIX}`);
+  } catch (err) {
+    console.error("GCS init failed, continuing with local-only:", err.message);
+    gcsBucket = null;
+  }
+}
+
+const pendingUploadTimers = new Map(); // fileName -> setTimeout id
+const pendingUploadData = new Map();   // fileName -> latest JSON string
+
+async function gcsDownload(fileName) {
+  if (!gcsBucket) return null;
+  try {
+    const obj = gcsBucket.file(GCS_PREFIX + fileName);
+    const [exists] = await obj.exists();
+    if (!exists) return null;
+    const [buf] = await obj.download();
+    return buf.toString("utf-8");
+  } catch (err) {
+    console.error(`GCS download ${fileName} failed:`, err.message);
+    return null;
+  }
+}
+
+async function gcsUpload(fileName, data) {
+  if (!gcsBucket) return;
+  try {
+    await gcsBucket.file(GCS_PREFIX + fileName).save(data, {
+      contentType: "application/json",
+      metadata: { cacheControl: "no-cache" },
+    });
+  } catch (err) {
+    console.error(`GCS upload ${fileName} failed:`, err.message);
+  }
+}
+
+function scheduleUpload(fileName, data) {
+  if (!gcsBucket) return;
+  pendingUploadData.set(fileName, data);
+  if (pendingUploadTimers.has(fileName)) clearTimeout(pendingUploadTimers.get(fileName));
+  const timer = setTimeout(async () => {
+    pendingUploadTimers.delete(fileName);
+    const latest = pendingUploadData.get(fileName);
+    pendingUploadData.delete(fileName);
+    await gcsUpload(fileName, latest);
+  }, UPLOAD_DEBOUNCE_MS);
+  pendingUploadTimers.set(fileName, timer);
+}
+
+async function flushPendingUploads() {
+  for (const timer of pendingUploadTimers.values()) clearTimeout(timer);
+  const entries = Array.from(pendingUploadData.entries());
+  pendingUploadTimers.clear();
+  pendingUploadData.clear();
+  await Promise.all(entries.map(([name, data]) => gcsUpload(name, data)));
+}
+
+async function hydrateFromGCS(fileName, localPath) {
+  if (!gcsBucket) return;
+  const remote = await gcsDownload(fileName);
+  if (!remote) return;
+  try {
+    JSON.parse(remote);
+    if (!fs.existsSync(path.dirname(localPath))) fs.mkdirSync(path.dirname(localPath), { recursive: true });
+    fs.writeFileSync(localPath, remote, "utf-8");
+    console.log(`Hydrated ${fileName} from GCS (${remote.length} bytes)`);
+  } catch (err) {
+    console.error(`Invalid JSON in GCS ${fileName}, keeping local copy:`, err.message);
+  }
+}
+
+process.on("SIGTERM", async () => {
+  console.log("SIGTERM received, flushing pending GCS uploads...");
+  try { await flushPendingUploads(); } catch (e) { console.error("Flush error:", e.message); }
+  process.exit(0);
+});
 
 app.use(cors());
 app.use(express.json({ limit: "10mb" }));
@@ -45,13 +135,104 @@ function loadProducts() {
 function saveProducts(data) {
   try {
     if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-    fs.writeFileSync(PRODUCTS_FILE, JSON.stringify(data, null, 2), "utf-8");
+    const json = JSON.stringify(data, null, 2);
+    fs.writeFileSync(PRODUCTS_FILE, json, "utf-8");
+    scheduleUpload(path.basename(PRODUCTS_FILE), json);
   } catch (err) {
     console.error("Error saving products.json:", err.message);
   }
 }
 
 let productsDB = loadProducts();
+
+// --- Loyalty storage ---------------------------------------------------------
+const ACCOUNTS_FILE = path.join(DATA_DIR, "accounts.json");
+const RECEIPTS_FILE = path.join(DATA_DIR, "receipts.json");
+
+function loadJsonFile(file, fallback) {
+  try {
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, "utf-8"));
+  } catch (err) {
+    console.error(`Error loading ${file}:`, err.message);
+  }
+  return fallback;
+}
+function saveJsonFile(file, data) {
+  try {
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    const json = JSON.stringify(data, null, 2);
+    fs.writeFileSync(file, json, "utf-8");
+    scheduleUpload(path.basename(file), json);
+  } catch (err) {
+    console.error(`Error saving ${file}:`, err.message);
+  }
+}
+
+let accountsDB = loadJsonFile(ACCOUNTS_FILE, {});
+let receiptsDB = loadJsonFile(RECEIPTS_FILE, []);
+
+function saveAccounts() { saveJsonFile(ACCOUNTS_FILE, accountsDB); }
+function saveReceipts() { saveJsonFile(RECEIPTS_FILE, receiptsDB); }
+
+const normEmail = (e) => String(e || "").trim().toLowerCase();
+const isValidEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
+
+// --- Email verification codes (in-memory, 10min TTL) -------------------------
+const emailCodes = new Map(); // email -> { code, expiresAt, attempts, lastSentAt }
+const CODE_TTL_MS = 10 * 60 * 1000;
+const CODE_MIN_RESEND_MS = 30 * 1000;
+const CODE_MAX_ATTEMPTS = 5;
+
+function generateCode() {
+  return String(crypto.randomInt(0, 1000000)).padStart(6, "0");
+}
+
+// --- Session token (HMAC-signed) --------------------------------------------
+function loyaltySecret() {
+  return process.env.LOYALTY_SECRET || process.env.ADMIN_KEY || "dev-loyalty-secret-change-me";
+}
+function b64url(buf) {
+  return Buffer.from(buf).toString("base64").replace(/=+$/, "").replace(/\+/g, "-").replace(/\//g, "_");
+}
+function b64urlDecode(s) {
+  s = s.replace(/-/g, "+").replace(/_/g, "/");
+  while (s.length % 4) s += "=";
+  return Buffer.from(s, "base64").toString();
+}
+function signToken(email, ttlMs = 30 * 24 * 3600 * 1000) {
+  const payload = { email: normEmail(email), exp: Date.now() + ttlMs };
+  const body = b64url(JSON.stringify(payload));
+  const sig = crypto.createHmac("sha256", loyaltySecret()).update(body).digest("hex");
+  return `${body}.${sig}`;
+}
+function verifyToken(token) {
+  if (!token || typeof token !== "string") return null;
+  const parts = token.split(".");
+  if (parts.length !== 2) return null;
+  const [body, sig] = parts;
+  const expected = crypto.createHmac("sha256", loyaltySecret()).update(body).digest("hex");
+  if (sig.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
+  try {
+    const payload = JSON.parse(b64urlDecode(body));
+    if (!payload.email || !payload.exp || payload.exp < Date.now()) return null;
+    return payload;
+  } catch (e) { return null; }
+}
+function requireLoyaltyAuth(req, res, next) {
+  const header = req.headers.authorization || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7) : (req.query.token || "");
+  const payload = verifyToken(token);
+  if (!payload) return res.status(401).json({ error: "Invalid or expired session. Please verify your email again." });
+  req.loyaltyEmail = payload.email;
+  next();
+}
+
+function receiptHash(retailer, date, total, items) {
+  const normItems = (items || []).map(i => `${(i.name || "").toLowerCase().replace(/\s+/g, " ").trim()}|${i.price || 0}|${i.qty || 1}`).sort().join(";");
+  const raw = `${(retailer || "").toLowerCase().trim()}|${(date || "").trim()}|${Number(total || 0).toFixed(2)}|${normItems}`;
+  return crypto.createHash("sha256").update(raw).digest("hex");
+}
 
 // --- Admin auth middleware ----------------------------------------------------
 function requireAdmin(req, res, next) {
@@ -349,6 +530,294 @@ app.get("/api/signups", (req, res) => {
   res.json({ total: signups.length, signups });
 });
 
+// --- Loyalty: Request email verification code -----------------------------
+app.post("/api/loyalty/request-code", async (req, res) => {
+  const email = normEmail(req.body?.email);
+  if (!isValidEmail(email)) return res.status(400).json({ error: "Please enter a valid email address." });
+  if (accountsDB[email]?.status === "blocked") return res.status(403).json({ error: "This account is blocked. Contact support." });
+
+  const existing = emailCodes.get(email);
+  if (existing && existing.lastSentAt && Date.now() - existing.lastSentAt < CODE_MIN_RESEND_MS) {
+    const waitSec = Math.ceil((CODE_MIN_RESEND_MS - (Date.now() - existing.lastSentAt)) / 1000);
+    return res.status(429).json({ error: `Please wait ${waitSec}s before requesting another code.` });
+  }
+
+  const code = generateCode();
+  emailCodes.set(email, { code, expiresAt: Date.now() + CODE_TTL_MS, attempts: 0, lastSentAt: Date.now() });
+
+  const htmlBody = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 480px; margin: 0 auto;">
+      <div style="background: #0a0a0a; padding: 32px; border-radius: 12px; text-align: center;">
+        <h1 style="color: #c8ff00; font-size: 24px; margin: 0 0 4px; letter-spacing: 3px;">DRAGONFLY</h1>
+        <p style="color: #888; font-size: 13px; margin: 0 0 24px;">Loyalty Rewards</p>
+        <p style="color: #fff; font-size: 15px; margin: 0 0 8px;">Your verification code:</p>
+        <div style="background: #141414; border: 1px solid rgba(200,255,0,0.3); border-radius: 10px; padding: 20px; margin: 16px 0;">
+          <div style="color: #c8ff00; font-size: 36px; font-weight: 700; letter-spacing: 8px; font-family: 'Courier New', monospace;">${code}</div>
+        </div>
+        <p style="color: #888; font-size: 12px; margin: 16px 0 0;">This code expires in 10 minutes.</p>
+        <p style="color: #555; font-size: 11px; margin: 8px 0 0;">If you didn't request this, you can ignore this email.</p>
+      </div>
+    </div>
+  `;
+  const textBody = `Your Dragonfly verification code is: ${code}\n\nExpires in 10 minutes. If you didn't request this, ignore this email.`;
+
+  try {
+    if (process.env.RESEND_API_KEY) {
+      const emailRes = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          from: `"Dragonfly Rewards" <${FROM_EMAIL}>`,
+          to: email,
+          subject: `Your Dragonfly code: ${code}`,
+          text: textBody,
+          html: htmlBody,
+        }),
+      });
+      if (!emailRes.ok) {
+        const errText = await emailRes.text();
+        console.error("Resend code send failed:", emailRes.status, errText);
+        return res.status(502).json({ error: "Could not send code. Try again." });
+      }
+      logActivity("loyalty_code", `Code sent to ${email}`);
+    } else {
+      console.log(`[DEV] Loyalty code for ${email}: ${code}`);
+      logActivity("loyalty_code", `[DEV] Code for ${email}: ${code}`);
+    }
+    res.json({ success: true, expiresInSec: 600 });
+  } catch (err) {
+    console.error("Code request error:", err.message);
+    res.status(500).json({ error: "Could not send code. Try again." });
+  }
+});
+
+// --- Loyalty: Verify code and issue session token --------------------------
+app.post("/api/loyalty/verify-code", (req, res) => {
+  const email = normEmail(req.body?.email);
+  const code = String(req.body?.code || "").trim();
+  const name = String(req.body?.name || "").trim().slice(0, 80);
+
+  if (!isValidEmail(email)) return res.status(400).json({ error: "Invalid email." });
+  if (!/^\d{6}$/.test(code)) return res.status(400).json({ error: "Enter the 6-digit code." });
+
+  const rec = emailCodes.get(email);
+  if (!rec) return res.status(400).json({ error: "No code found. Request a new one." });
+  if (Date.now() > rec.expiresAt) { emailCodes.delete(email); return res.status(400).json({ error: "Code expired. Request a new one." }); }
+  rec.attempts = (rec.attempts || 0) + 1;
+  if (rec.attempts > CODE_MAX_ATTEMPTS) { emailCodes.delete(email); return res.status(429).json({ error: "Too many attempts. Request a new code." }); }
+  if (rec.code !== code) return res.status(400).json({ error: "Incorrect code.", attemptsLeft: CODE_MAX_ATTEMPTS - rec.attempts });
+
+  emailCodes.delete(email);
+
+  const now = new Date().toISOString();
+  if (!accountsDB[email]) {
+    accountsDB[email] = { email, name: name || "", points: 0, createdAt: now, lastActivityAt: now, flagCount: 0, status: "active" };
+    logActivity("loyalty_signup", `New loyalty account: ${email}`);
+  } else {
+    if (name && !accountsDB[email].name) accountsDB[email].name = name;
+    accountsDB[email].lastActivityAt = now;
+  }
+  saveAccounts();
+
+  const token = signToken(email);
+  const acct = accountsDB[email];
+  res.json({ success: true, token, account: { email: acct.email, name: acct.name, points: acct.points } });
+});
+
+// --- Loyalty: Get account info + receipt history ---------------------------
+app.get("/api/loyalty/account", requireLoyaltyAuth, (req, res) => {
+  const email = req.loyaltyEmail;
+  const acct = accountsDB[email];
+  if (!acct) return res.status(404).json({ error: "Account not found." });
+  const myReceipts = receiptsDB.filter(r => r.email === email).sort((a, b) => b.timestamp.localeCompare(a.timestamp)).slice(0, 50);
+  res.json({
+    account: { email: acct.email, name: acct.name, points: acct.points, createdAt: acct.createdAt, status: acct.status },
+    receipts: myReceipts.map(r => ({
+      id: r.id, retailer: r.retailer, date: r.date, total: r.total, dragonflySubtotal: r.dragonflySubtotal,
+      pointsAwarded: r.pointsAwarded, items: r.items, status: r.status, flags: r.flags, timestamp: r.timestamp,
+    })),
+  });
+});
+
+// --- Loyalty: Update account name ------------------------------------------
+app.post("/api/loyalty/update-name", requireLoyaltyAuth, (req, res) => {
+  const email = req.loyaltyEmail;
+  const name = String(req.body?.name || "").trim().slice(0, 80);
+  if (!accountsDB[email]) return res.status(404).json({ error: "Account not found." });
+  accountsDB[email].name = name;
+  saveAccounts();
+  res.json({ success: true });
+});
+
+// --- Loyalty: Scan receipt, extract items, award points --------------------
+app.post("/api/loyalty/scan-receipt", requireLoyaltyAuth, async (req, res) => {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(500).json({ error: "ANTHROPIC_API_KEY not configured on server." });
+
+  const email = req.loyaltyEmail;
+  const acct = accountsDB[email];
+  if (!acct) return res.status(404).json({ error: "Account not found." });
+  if (acct.status === "blocked") return res.status(403).json({ error: "This account is blocked. Contact support." });
+
+  const { image_base64, media_type, location } = req.body || {};
+  if (!image_base64) return res.status(400).json({ error: "image_base64 is required." });
+
+  // Rapid-submission flag: count receipts from this email in last 5 min
+  const fiveMinAgo = Date.now() - 5 * 60 * 1000;
+  const recentCount = receiptsDB.filter(r => r.email === email && new Date(r.timestamp).getTime() > fiveMinAgo).length;
+
+  try {
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 1500,
+        messages: [{
+          role: "user",
+          content: [
+            { type: "image", source: { type: "base64", media_type: media_type || "image/jpeg", data: image_base64 } },
+            { type: "text", text: `You are a receipt parser for the Dragonfly cannabis brand loyalty program. OCR this receipt image and extract structured data.
+
+IDENTIFY DRAGONFLY ITEMS:
+Line items are "Dragonfly" if the product name/brand contains "Dragonfly" OR matches known Dragonfly products. Dragonfly product names include: Honey Banana, Ice Cream Cookies, Jelly Donutz, Orange Creampop, Skeeter, plus generic types (preroll, flower, vape, disposable, infused) when sold under the Dragonfly brand. When uncertain, set is_dragonfly=false.
+
+RETURN ONLY VALID JSON in this exact shape:
+{
+  "is_receipt": true/false,
+  "retailer": "dispensary/store name on receipt, or null",
+  "date": "YYYY-MM-DD if you can read it, else null",
+  "total": number (grand total in dollars, e.g. 45.99),
+  "subtotal": number or null,
+  "tax": number or null,
+  "currency": "USD",
+  "items": [
+    { "name": "item name as printed", "qty": number (default 1), "price": number (line total in dollars), "is_dragonfly": true/false, "notes": "short reason if uncertain" }
+  ],
+  "confidence": "high" | "medium" | "low",
+  "parse_notes": "short note if anything was unreadable"
+}
+
+RULES:
+- "price" per line is the line total (qty * unit), as printed.
+- Ignore tax/fee lines in items[] — only product lines.
+- If the image is not a receipt (product label, random photo, etc.), set is_receipt=false and leave other fields empty/null.
+- Never invent items. Only include lines you can read clearly.
+- Respond with JSON only. No prose, no code fences.` }
+          ]
+        }]
+      })
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error("Anthropic receipt parse error:", response.status, errText);
+      return res.status(502).json({ error: "Receipt parse failed. Try a clearer photo." });
+    }
+
+    const result = await response.json();
+    const rawText = result.content?.[0]?.text?.trim() || "";
+    let parsed = null;
+    try {
+      let jsonStr = rawText;
+      if (jsonStr.startsWith("```")) jsonStr = jsonStr.split("\n").slice(1).join("\n").replace(/```\s*$/, "").trim();
+      parsed = JSON.parse(jsonStr);
+    } catch (e) {
+      console.error("Could not parse receipt JSON:", rawText.slice(0, 500));
+      return res.status(422).json({ error: "Could not read receipt. Try a clearer, well-lit photo.", raw: rawText.slice(0, 300) });
+    }
+
+    if (!parsed || parsed.is_receipt === false) {
+      return res.status(422).json({ error: "That doesn't look like a receipt. Try again with a clearer shot of the full receipt." });
+    }
+
+    const retailer = (parsed.retailer || "Unknown Retailer").toString().trim().slice(0, 120);
+    const date = (parsed.date || new Date().toISOString().slice(0, 10)).toString().trim().slice(0, 20);
+    const total = Number(parsed.total) || 0;
+    const rawItems = Array.isArray(parsed.items) ? parsed.items : [];
+    const items = rawItems.map(it => ({
+      name: String(it?.name || "").trim().slice(0, 160),
+      qty: Number(it?.qty) > 0 ? Number(it.qty) : 1,
+      price: Number(it?.price) || 0,
+      is_dragonfly: it?.is_dragonfly === true,
+      notes: String(it?.notes || "").slice(0, 200),
+    })).filter(i => i.name);
+
+    const dragonflySubtotal = items.filter(i => i.is_dragonfly).reduce((sum, i) => sum + (i.price || 0), 0);
+    const pointsAwarded = Math.floor(dragonflySubtotal);
+
+    const hash = receiptHash(retailer, date, total, items);
+    const duplicate = receiptsDB.find(r => r.hash === hash);
+    if (duplicate) {
+      logActivity("loyalty_duplicate", `Duplicate receipt blocked for ${email} (hash ${hash.slice(0, 8)})`);
+      return res.status(409).json({
+        error: "This receipt has already been submitted.",
+        duplicate: { email: duplicate.email === email ? "you" : "another account", timestamp: duplicate.timestamp, pointsAwarded: duplicate.pointsAwarded },
+      });
+    }
+
+    // Anomaly flags (non-blocking)
+    const flags = [];
+    if (parsed.confidence === "low") flags.push("low_confidence_parse");
+    if (items.length === 0) flags.push("no_items_parsed");
+    if (dragonflySubtotal === 0) flags.push("no_dragonfly_items");
+    if (total > 500) flags.push("high_value");
+    if (recentCount >= 3) flags.push("rapid_submission");
+    if (dragonflySubtotal > total + 0.01) flags.push("dragonfly_exceeds_total");
+
+    let loc = null;
+    if (location && typeof location === "object" && Number.isFinite(location.lat) && Number.isFinite(location.lng)) {
+      loc = {
+        lat: Number(location.lat),
+        lng: Number(location.lng),
+        accuracy: Number.isFinite(location.accuracy) ? Number(location.accuracy) : null,
+        source: String(location.source || "browser").slice(0, 20),
+      };
+      if (loc.accuracy && loc.accuracy > 1000) flags.push("low_location_accuracy");
+    }
+
+    // High submission velocity at account level
+    const dayAgo = Date.now() - 24 * 3600 * 1000;
+    const last24h = receiptsDB.filter(r => r.email === email && new Date(r.timestamp).getTime() > dayAgo).length;
+    if (last24h >= 10) flags.push("high_daily_submissions");
+
+    const receipt = {
+      id: crypto.randomBytes(8).toString("hex"),
+      email,
+      retailer, date, total, subtotal: Number(parsed.subtotal) || null, tax: Number(parsed.tax) || null,
+      items, dragonflySubtotal,
+      pointsAwarded, status: "approved", flags, hash,
+      confidence: parsed.confidence || "medium",
+      parseNotes: String(parsed.parse_notes || "").slice(0, 300),
+      location: loc,
+      timestamp: new Date().toISOString(),
+    };
+    receiptsDB.unshift(receipt);
+    if (receiptsDB.length > 5000) receiptsDB.length = 5000;
+    saveReceipts();
+
+    acct.points = (acct.points || 0) + pointsAwarded;
+    acct.lastActivityAt = receipt.timestamp;
+    if (flags.length) acct.flagCount = (acct.flagCount || 0) + 1;
+    saveAccounts();
+
+    const detail = `${email} +${pointsAwarded}pts from ${retailer} ($${total.toFixed(2)}, $${dragonflySubtotal.toFixed(2)} Dragonfly)${flags.length ? ` [flags: ${flags.join(",")}]` : ""}`;
+    logActivity(flags.length ? "loyalty_receipt_flagged" : "loyalty_receipt", detail);
+
+    res.json({
+      success: true,
+      receipt: {
+        id: receipt.id, retailer, date, total, items, dragonflySubtotal,
+        pointsAwarded, flags, confidence: receipt.confidence, parseNotes: receipt.parseNotes, timestamp: receipt.timestamp,
+      },
+      account: { email: acct.email, name: acct.name, points: acct.points },
+    });
+  } catch (err) {
+    console.error("Receipt scan error:", err.message);
+    res.status(500).json({ error: "Receipt scan failed: " + err.message });
+  }
+});
+
 // --- Health check ----------------------------------------------------------
 app.get("/api/health", (req, res) => {
   res.json({
@@ -356,6 +825,8 @@ app.get("/api/health", (req, res) => {
     uptime: process.uptime(),
     signups: signups.length,
     resendConfigured: !!process.env.RESEND_API_KEY,
+    loyaltyAccounts: Object.keys(accountsDB).length,
+    loyaltyReceipts: receiptsDB.length,
   });
 });
 
@@ -368,6 +839,10 @@ app.get("/api/admin/stats", requireAdmin, (req, res) => {
   const mins = Math.floor((uptimeSec % 3600) / 60);
   const secs = uptimeSec % 60;
 
+  const loyaltyAccounts = Object.values(accountsDB);
+  const pointsIssued = loyaltyAccounts.reduce((sum, a) => sum + (a.points || 0), 0);
+  const flaggedCount = receiptsDB.filter(r => r.flags?.length && r.status === "approved").length;
+
   res.json({
     scanCount,
     signupCount: signups.length,
@@ -377,7 +852,89 @@ app.get("/api/admin/stats", requireAdmin, (req, res) => {
     recentScans: recentScans.slice(0, 20),
     recentActivity: activityLog.slice(0, 30),
     signups: signups.slice(-20).reverse(),
+    loyaltyAccountCount: loyaltyAccounts.length,
+    loyaltyReceiptCount: receiptsDB.length,
+    loyaltyPointsIssued: pointsIssued,
+    loyaltyFlaggedCount: flaggedCount,
   });
+});
+
+// --- Admin Loyalty endpoints ----------------------------------------------
+app.get("/api/admin/loyalty", requireAdmin, (req, res) => {
+  const accounts = Object.values(accountsDB).sort((a, b) => (b.lastActivityAt || "").localeCompare(a.lastActivityAt || ""));
+  const receipts = receiptsDB.slice(0, 500);
+  const pointsIssued = accounts.reduce((s, a) => s + (a.points || 0), 0);
+  const flagged = receiptsDB.filter(r => r.flags?.length);
+  res.json({
+    totals: {
+      accounts: accounts.length,
+      receipts: receiptsDB.length,
+      pointsIssued,
+      flaggedReceipts: flagged.length,
+      approvedReceipts: receiptsDB.filter(r => r.status === "approved").length,
+      voidedReceipts: receiptsDB.filter(r => r.status === "voided").length,
+    },
+    accounts,
+    receipts,
+    flagged: flagged.slice(0, 200),
+  });
+});
+
+// Void a receipt (deducts points from account)
+app.post("/api/admin/loyalty/receipts/:id/void", requireAdmin, (req, res) => {
+  const id = req.params.id;
+  const r = receiptsDB.find(x => x.id === id);
+  if (!r) return res.status(404).json({ error: "Receipt not found." });
+  if (r.status === "voided") return res.json({ success: true, receipt: r });
+  const acct = accountsDB[r.email];
+  if (acct) {
+    acct.points = Math.max(0, (acct.points || 0) - (r.pointsAwarded || 0));
+    saveAccounts();
+  }
+  r.status = "voided";
+  r.voidedAt = new Date().toISOString();
+  r.voidReason = String(req.body?.reason || "").slice(0, 200);
+  saveReceipts();
+  logActivity("loyalty_void", `Voided receipt ${id} for ${r.email} (-${r.pointsAwarded}pts)${r.voidReason ? `: ${r.voidReason}` : ""}`);
+  res.json({ success: true, receipt: r, account: acct ? { email: acct.email, points: acct.points } : null });
+});
+
+// Flag a receipt manually
+app.post("/api/admin/loyalty/receipts/:id/flag", requireAdmin, (req, res) => {
+  const id = req.params.id;
+  const r = receiptsDB.find(x => x.id === id);
+  if (!r) return res.status(404).json({ error: "Receipt not found." });
+  const flag = String(req.body?.flag || "manual_review").slice(0, 40);
+  r.flags = r.flags || [];
+  if (!r.flags.includes(flag)) r.flags.push(flag);
+  saveReceipts();
+  logActivity("loyalty_flag", `Flagged receipt ${id} (${flag})`);
+  res.json({ success: true, receipt: r });
+});
+
+// Adjust an account's points (add/remove)
+app.post("/api/admin/loyalty/accounts/:email/adjust", requireAdmin, (req, res) => {
+  const email = normEmail(req.params.email);
+  const acct = accountsDB[email];
+  if (!acct) return res.status(404).json({ error: "Account not found." });
+  const delta = Math.round(Number(req.body?.delta) || 0);
+  const reason = String(req.body?.reason || "").slice(0, 200);
+  acct.points = Math.max(0, (acct.points || 0) + delta);
+  saveAccounts();
+  logActivity("loyalty_adjust", `Adjusted ${email} by ${delta >= 0 ? "+" : ""}${delta}pts${reason ? `: ${reason}` : ""}`);
+  res.json({ success: true, account: acct });
+});
+
+// Block / unblock an account
+app.post("/api/admin/loyalty/accounts/:email/status", requireAdmin, (req, res) => {
+  const email = normEmail(req.params.email);
+  const acct = accountsDB[email];
+  if (!acct) return res.status(404).json({ error: "Account not found." });
+  const status = req.body?.status === "blocked" ? "blocked" : "active";
+  acct.status = status;
+  saveAccounts();
+  logActivity("loyalty_status", `Account ${email} -> ${status}`);
+  res.json({ success: true, account: acct });
 });
 
 // Get all products
@@ -436,7 +993,9 @@ function loadScrapeSites() {
 function saveScrapeSites(sites) {
   try {
     if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-    fs.writeFileSync(SCRAPE_SITES_FILE, JSON.stringify(sites, null, 2), "utf-8");
+    const json = JSON.stringify(sites, null, 2);
+    fs.writeFileSync(SCRAPE_SITES_FILE, json, "utf-8");
+    scheduleUpload(path.basename(SCRAPE_SITES_FILE), json);
   } catch (e) {}
 }
 let scrapeSites = loadScrapeSites();
@@ -629,11 +1188,34 @@ app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "dist", "index.html"));
 });
 
-app.listen(PORT, () => {
-  console.log(`\nDragonfly Scanner API running on port ${PORT}`);
-  console.log(`  Notifications -> ${NOTIFY_EMAIL}`);
-  console.log(`  Resend configured: ${!!process.env.RESEND_API_KEY}`);
-  console.log(`  Admin signups:   /api/signups${process.env.ADMIN_KEY ? "?key=***" : ""}`);
-  console.log(`  Admin dashboard: /admin`);
-  console.log(`  Products loaded: ${Object.keys(productsDB.strains || {}).length} strains\n`);
+async function bootstrap() {
+  if (gcsBucket) {
+    await Promise.all([
+      hydrateFromGCS(path.basename(PRODUCTS_FILE), PRODUCTS_FILE),
+      hydrateFromGCS(path.basename(ACCOUNTS_FILE), ACCOUNTS_FILE),
+      hydrateFromGCS(path.basename(RECEIPTS_FILE), RECEIPTS_FILE),
+      hydrateFromGCS(path.basename(SCRAPE_SITES_FILE), SCRAPE_SITES_FILE),
+    ]);
+    // Re-read in-memory copies from the freshly hydrated files
+    productsDB = loadProducts();
+    accountsDB = loadJsonFile(ACCOUNTS_FILE, {});
+    receiptsDB = loadJsonFile(RECEIPTS_FILE, []);
+    scrapeSites = loadScrapeSites();
+  }
+
+  app.listen(PORT, () => {
+    console.log(`\nDragonfly Scanner API running on port ${PORT}`);
+    console.log(`  Notifications -> ${NOTIFY_EMAIL}`);
+    console.log(`  Resend configured: ${!!process.env.RESEND_API_KEY}`);
+    console.log(`  GCS persistence: ${gcsBucket ? `enabled (gs://${GCS_BUCKET}/${GCS_PREFIX})` : "disabled (local-only)"}`);
+    console.log(`  Admin signups:   /api/signups${process.env.ADMIN_KEY ? "?key=***" : ""}`);
+    console.log(`  Admin dashboard: /admin`);
+    console.log(`  Products loaded: ${Object.keys(productsDB.strains || {}).length} strains`);
+    console.log(`  Loyalty accounts: ${Object.keys(accountsDB).length}, receipts: ${receiptsDB.length}\n`);
+  });
+}
+
+bootstrap().catch((err) => {
+  console.error("Bootstrap failed:", err);
+  process.exit(1);
 });

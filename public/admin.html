@@ -153,6 +153,17 @@
   .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid var(--text-dim); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.6s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
 
+  /* Sub-tabs (inside a tab) */
+  .sub-tab { padding: 10px 16px; font-size: 13px; color: var(--text-muted); cursor: pointer; border-bottom: 2px solid transparent; }
+  .sub-tab:hover { color: var(--text); }
+  .sub-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  /* Loyalty flag chips */
+  .flag-chip { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 10px; background: rgba(245,158,11,0.12); color: var(--sativa); margin-right: 4px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+  .status-approved { color: var(--success); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
+  .status-voided { color: var(--error); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; text-decoration: line-through; }
+  .status-blocked { color: var(--error); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
+
   /* Toast */
   .toast { position: fixed; bottom: 24px; right: 24px; background: var(--bg-card); border: 1px solid var(--accent); border-radius: 10px; padding: 14px 20px; font-size: 14px; z-index: 300; animation: slideIn 0.3s; }
   .toast.error { border-color: var(--error); color: var(--error); }
@@ -185,6 +196,7 @@
   <div class="tabs">
     <div class="tab active" data-tab="dashboard" onclick="switchTab('dashboard')">Dashboard</div>
     <div class="tab" data-tab="products" onclick="switchTab('products')">Products</div>
+    <div class="tab" data-tab="loyalty" onclick="switchTab('loyalty')">Loyalty</div>
     <div class="tab" data-tab="scraper" onclick="switchTab('scraper')">Scraper</div>
     <div class="tab" data-tab="settings" onclick="switchTab('settings')">Settings</div>
   </div>
@@ -198,6 +210,12 @@
         <div class="stat-card"><div class="label">Signups</div><div class="value" id="statSignups">--</div><div class="sub">Email collected</div></div>
         <div class="stat-card"><div class="label">Products</div><div class="value" id="statProducts">--</div><div class="sub">In database</div></div>
         <div class="stat-card"><div class="label">Uptime</div><div class="value" id="statUptime" style="font-size: 24px;">--</div><div class="sub">Server uptime</div></div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat-card"><div class="label">Loyalty Accounts</div><div class="value" id="statLoyaltyAccounts">--</div><div class="sub">Email-verified</div></div>
+        <div class="stat-card"><div class="label">Receipts</div><div class="value" id="statLoyaltyReceipts">--</div><div class="sub">Submitted</div></div>
+        <div class="stat-card"><div class="label">Points Issued</div><div class="value" id="statLoyaltyPoints">--</div><div class="sub">Net outstanding</div></div>
+        <div class="stat-card"><div class="label">Flagged</div><div class="value" id="statLoyaltyFlagged" style="color: var(--sativa);">--</div><div class="sub">Needs review</div></div>
       </div>
 
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
@@ -261,6 +279,58 @@
       </div>
     </div>
 
+    <!-- Loyalty -->
+    <div id="panel-loyalty" class="panel">
+      <div class="stats-grid" style="margin-bottom: 16px;">
+        <div class="stat-card"><div class="label">Accounts</div><div class="value" id="loyAccounts">--</div></div>
+        <div class="stat-card"><div class="label">Receipts</div><div class="value" id="loyReceipts">--</div></div>
+        <div class="stat-card"><div class="label">Points Out</div><div class="value" id="loyPoints">--</div></div>
+        <div class="stat-card"><div class="label">Flagged</div><div class="value" id="loyFlagged" style="color: var(--sativa);">--</div></div>
+      </div>
+
+      <div style="display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 16px;">
+        <div class="sub-tab active" data-subtab="receipts" onclick="switchLoyaltySubtab('receipts')">Receipts</div>
+        <div class="sub-tab" data-subtab="flagged" onclick="switchLoyaltySubtab('flagged')">Flagged</div>
+        <div class="sub-tab" data-subtab="accounts" onclick="switchLoyaltySubtab('accounts')">Accounts</div>
+      </div>
+
+      <div class="toolbar">
+        <input type="text" id="loyaltySearch" placeholder="Search email, retailer, or item..." oninput="renderLoyalty()">
+        <select id="loyaltyStatusFilter" onchange="renderLoyalty()">
+          <option value="">All Statuses</option>
+          <option value="approved">Approved</option>
+          <option value="voided">Voided</option>
+        </select>
+        <button class="btn btn-outline" onclick="loadLoyalty()">Refresh</button>
+      </div>
+
+      <div id="loyaltyCount" style="color: var(--text-dim); font-size: 13px; margin-bottom: 12px;"></div>
+
+      <!-- Receipts table -->
+      <div class="table-wrap" id="loyaltyReceiptsWrap">
+        <table>
+          <thead>
+            <tr>
+              <th>When</th><th>Email</th><th>Retailer</th><th>Date</th><th>Total</th><th>DF $</th><th>Pts</th><th>Items</th><th>Flags</th><th>Status</th><th>Location</th><th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="loyaltyReceiptsTable"></tbody>
+        </table>
+      </div>
+
+      <!-- Accounts table -->
+      <div class="table-wrap" id="loyaltyAccountsWrap" style="display: none;">
+        <table>
+          <thead>
+            <tr>
+              <th>Email</th><th>Name</th><th>Points</th><th>Flags</th><th>Created</th><th>Last Activity</th><th>Status</th><th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="loyaltyAccountsTable"></tbody>
+        </table>
+      </div>
+    </div>
+
     <!-- Scraper -->
     <div id="panel-scraper" class="panel">
       <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin-bottom: 20px;">
@@ -301,6 +371,17 @@
       <div id="healthInfo" class="settings-grid"></div>
     </div>
 
+  </div>
+</div>
+
+<!-- Receipt detail modal -->
+<div id="receiptModal" class="modal-overlay" onclick="if(event.target===this)closeReceiptModal()">
+  <div class="modal" style="max-width: 720px;">
+    <h2 id="receiptModalTitle">Receipt</h2>
+    <div id="receiptModalBody" style="font-size: 14px; color: var(--text-muted);"></div>
+    <div class="form-actions">
+      <button class="btn btn-outline" onclick="closeReceiptModal()">Close</button>
+    </div>
   </div>
 </div>
 
@@ -414,6 +495,7 @@ function switchTab(tab) {
   document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + tab));
   if (tab === 'dashboard') loadDashboard();
   if (tab === 'products') loadProducts();
+  if (tab === 'loyalty') loadLoyalty();
   if (tab === 'scraper') loadScrapeSites();
   if (tab === 'settings') loadSettings();
 }
@@ -429,6 +511,10 @@ async function loadDashboard() {
     document.getElementById('statSignups').textContent = statsData.signupCount;
     document.getElementById('statProducts').textContent = statsData.productCount;
     document.getElementById('statUptime').textContent = statsData.uptime;
+    document.getElementById('statLoyaltyAccounts').textContent = statsData.loyaltyAccountCount ?? 0;
+    document.getElementById('statLoyaltyReceipts').textContent = statsData.loyaltyReceiptCount ?? 0;
+    document.getElementById('statLoyaltyPoints').textContent = (statsData.loyaltyPointsIssued ?? 0).toLocaleString();
+    document.getElementById('statLoyaltyFlagged').textContent = statsData.loyaltyFlaggedCount ?? 0;
 
     // Activity feed
     const feed = document.getElementById('activityFeed');
@@ -790,6 +876,198 @@ async function loadSettings() {
   } catch (e) {
     document.getElementById('healthInfo').innerHTML = '<div class="setting-row"><div class="setting-name">Error</div><span class="setting-status missing">Could not reach server</span></div>';
   }
+}
+
+// --- Loyalty ---
+let loyaltyData = { accounts: [], receipts: [], flagged: [], totals: {} };
+let loyaltySubtab = 'receipts'; // 'receipts' | 'flagged' | 'accounts'
+
+async function loadLoyalty() {
+  try {
+    const r = await fetch(`${API}/api/admin/loyalty?key=${encodeURIComponent(adminKey)}`);
+    if (!r.ok) { toast('Failed to load loyalty data', true); return; }
+    loyaltyData = await r.json();
+    const t = loyaltyData.totals || {};
+    document.getElementById('loyAccounts').textContent = t.accounts ?? 0;
+    document.getElementById('loyReceipts').textContent = t.receipts ?? 0;
+    document.getElementById('loyPoints').textContent = (t.pointsIssued ?? 0).toLocaleString();
+    document.getElementById('loyFlagged').textContent = t.flaggedReceipts ?? 0;
+    renderLoyalty();
+  } catch (e) {
+    toast('Network error loading loyalty', true);
+  }
+}
+
+function switchLoyaltySubtab(tab) {
+  loyaltySubtab = tab;
+  document.querySelectorAll('.sub-tab').forEach(t => t.classList.toggle('active', t.dataset.subtab === tab));
+  document.getElementById('loyaltyReceiptsWrap').style.display = (tab === 'accounts') ? 'none' : '';
+  document.getElementById('loyaltyAccountsWrap').style.display = (tab === 'accounts') ? '' : 'none';
+  renderLoyalty();
+}
+
+function renderLoyalty() {
+  const search = (document.getElementById('loyaltySearch').value || '').toLowerCase().trim();
+  const statusFilter = document.getElementById('loyaltyStatusFilter').value;
+
+  if (loyaltySubtab === 'accounts') {
+    let accts = loyaltyData.accounts || [];
+    if (search) accts = accts.filter(a => (a.email || '').toLowerCase().includes(search) || (a.name || '').toLowerCase().includes(search));
+    document.getElementById('loyaltyCount').textContent = `${accts.length} account${accts.length === 1 ? '' : 's'}`;
+    const tb = document.getElementById('loyaltyAccountsTable');
+    tb.innerHTML = accts.map(a => `
+      <tr>
+        <td><strong>${esc(a.email)}</strong></td>
+        <td>${esc(a.name || '')}</td>
+        <td style="font-family:'JetBrains Mono',monospace; color: var(--accent);">${(a.points || 0).toLocaleString()}</td>
+        <td>${a.flagCount ? `<span class="flag-chip">${a.flagCount}</span>` : '<span style="color:var(--text-dim);">0</span>'}</td>
+        <td style="color: var(--text-dim); font-size: 12px;">${esc(fmtDate(a.createdAt))}</td>
+        <td style="color: var(--text-dim); font-size: 12px;">${esc(fmtDate(a.lastActivityAt))}</td>
+        <td>${a.status === 'blocked' ? '<span class="status-blocked">Blocked</span>' : '<span class="status-approved">Active</span>'}</td>
+        <td style="white-space: nowrap;">
+          <button class="btn btn-outline btn-sm" onclick="adjustPoints('${esc(a.email)}', ${a.points || 0})">Adjust</button>
+          <button class="btn ${a.status === 'blocked' ? 'btn-outline' : 'btn-danger'} btn-sm" onclick="toggleBlock('${esc(a.email)}', '${a.status === 'blocked' ? 'active' : 'blocked'}')">${a.status === 'blocked' ? 'Unblock' : 'Block'}</button>
+        </td>
+      </tr>`).join('') || `<tr><td colspan="8" style="text-align:center; color: var(--text-dim); padding: 40px;">No accounts yet</td></tr>`;
+    return;
+  }
+
+  let receipts = loyaltySubtab === 'flagged' ? (loyaltyData.flagged || []) : (loyaltyData.receipts || []);
+  if (statusFilter) receipts = receipts.filter(r => r.status === statusFilter);
+  if (search) receipts = receipts.filter(r =>
+    (r.email || '').toLowerCase().includes(search) ||
+    (r.retailer || '').toLowerCase().includes(search) ||
+    (r.items || []).some(i => (i.name || '').toLowerCase().includes(search))
+  );
+
+  document.getElementById('loyaltyCount').textContent = `${receipts.length} receipt${receipts.length === 1 ? '' : 's'}`;
+  const tb = document.getElementById('loyaltyReceiptsTable');
+  tb.innerHTML = receipts.map(r => {
+    const flagsHtml = (r.flags || []).map(f => `<span class="flag-chip">${esc(f.replace(/_/g, ' '))}</span>`).join('');
+    const dfItems = (r.items || []).filter(i => i.is_dragonfly).length;
+    const totalItems = (r.items || []).length;
+    const locHtml = r.location
+      ? `<a href="https://maps.google.com/?q=${r.location.lat},${r.location.lng}" target="_blank" style="color:var(--accent);font-size:11px;">${r.location.lat.toFixed(3)},${r.location.lng.toFixed(3)}</a>`
+      : '<span style="color:var(--text-dim);">--</span>';
+    return `<tr>
+      <td style="color: var(--text-dim); font-size: 12px; font-family: 'JetBrains Mono', monospace;">${esc(fmtDateTime(r.timestamp))}</td>
+      <td style="font-size: 12px;"><a href="#" onclick="event.preventDefault(); focusAccount('${esc(r.email)}')" style="color: var(--text);">${esc(r.email)}</a></td>
+      <td>${esc(r.retailer)}</td>
+      <td style="color: var(--text-dim); font-size: 12px; font-family: 'JetBrains Mono', monospace;">${esc(r.date)}</td>
+      <td style="font-family: 'JetBrains Mono', monospace;">$${Number(r.total || 0).toFixed(2)}</td>
+      <td style="font-family: 'JetBrains Mono', monospace; color: var(--accent);">$${Number(r.dragonflySubtotal || 0).toFixed(2)}</td>
+      <td style="font-family: 'JetBrains Mono', monospace; color: var(--accent); font-weight: 600;">${r.status === 'voided' ? '<span style="text-decoration:line-through;">' + (r.pointsAwarded || 0) + '</span>' : (r.pointsAwarded || 0)}</td>
+      <td style="font-size: 12px; color: var(--text-muted);">${dfItems}/${totalItems} DF</td>
+      <td>${flagsHtml || '<span style="color:var(--text-dim);">--</span>'}</td>
+      <td>${r.status === 'voided' ? '<span class="status-voided">Voided</span>' : '<span class="status-approved">Approved</span>'}</td>
+      <td>${locHtml}</td>
+      <td style="white-space: nowrap;">
+        <button class="btn btn-outline btn-sm" onclick="openReceiptDetail('${r.id}')">View</button>
+        ${r.status === 'approved' ? `<button class="btn btn-danger btn-sm" onclick="voidReceipt('${r.id}')">Void</button>` : ''}
+      </td>
+    </tr>`;
+  }).join('') || `<tr><td colspan="12" style="text-align:center; color: var(--text-dim); padding: 40px;">No receipts yet</td></tr>`;
+}
+
+function openReceiptDetail(id) {
+  const r = (loyaltyData.receipts || []).find(x => x.id === id) || (loyaltyData.flagged || []).find(x => x.id === id);
+  if (!r) { toast('Receipt not found', true); return; }
+  document.getElementById('receiptModalTitle').textContent = `${r.retailer} - $${Number(r.total).toFixed(2)}`;
+  const itemsHtml = (r.items || []).map(i => `
+    <tr>
+      <td>${esc(i.name)}${i.qty > 1 ? ` x${i.qty}` : ''}</td>
+      <td style="font-family: 'JetBrains Mono', monospace;">$${Number(i.price || 0).toFixed(2)}</td>
+      <td>${i.is_dragonfly ? '<span class="flag-chip" style="background: var(--accent-dim); color: var(--accent);">DRAGONFLY</span>' : '<span style="color: var(--text-dim); font-size: 11px;">other</span>'}</td>
+    </tr>`).join('');
+  const flagsHtml = (r.flags || []).map(f => `<span class="flag-chip">${esc(f.replace(/_/g, ' '))}</span>`).join(' ') || '<span style="color: var(--text-dim);">none</span>';
+  const locHtml = r.location
+    ? `<a href="https://maps.google.com/?q=${r.location.lat},${r.location.lng}" target="_blank" style="color:var(--accent);">${r.location.lat.toFixed(5)}, ${r.location.lng.toFixed(5)}${r.location.accuracy ? ` (±${Math.round(r.location.accuracy)}m)` : ''}</a>`
+    : '<span style="color: var(--text-dim);">not provided</span>';
+  document.getElementById('receiptModalBody').innerHTML = `
+    <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px 20px; margin-bottom: 20px;">
+      <div><div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;">Account</div><div style="font-size:14px;">${esc(r.email)}</div></div>
+      <div><div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;">Submitted</div><div style="font-size:14px;">${esc(fmtDateTime(r.timestamp))}</div></div>
+      <div><div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;">Date on Receipt</div><div style="font-size:14px;">${esc(r.date)}</div></div>
+      <div><div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;">Confidence</div><div style="font-size:14px;">${esc(r.confidence || 'medium')}</div></div>
+      <div><div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;">Total</div><div style="font-size:14px; font-family: 'JetBrains Mono', monospace;">$${Number(r.total).toFixed(2)}</div></div>
+      <div><div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;">Dragonfly Subtotal</div><div style="font-size:14px; font-family: 'JetBrains Mono', monospace; color: var(--accent);">$${Number(r.dragonflySubtotal).toFixed(2)}</div></div>
+      <div><div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;">Points Awarded</div><div style="font-size:14px; font-family: 'JetBrains Mono', monospace; color: var(--accent); font-weight: 600;">${r.pointsAwarded}${r.status === 'voided' ? ' (voided)' : ''}</div></div>
+      <div><div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;">Location</div><div style="font-size:14px;">${locHtml}</div></div>
+    </div>
+    <div style="margin-bottom: 16px;"><div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px; margin-bottom: 6px;">Flags</div>${flagsHtml}</div>
+    ${r.parseNotes ? `<div style="margin-bottom: 16px; padding: 10px 12px; background: var(--bg); border-radius: 8px; font-size: 12px; color: var(--text-muted);"><strong>Parse notes:</strong> ${esc(r.parseNotes)}</div>` : ''}
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Item</th><th>Price</th><th>Type</th></tr></thead>
+        <tbody>${itemsHtml || '<tr><td colspan="3" style="text-align:center;color:var(--text-dim);">No items parsed</td></tr>'}</tbody>
+      </table>
+    </div>
+  `;
+  document.getElementById('receiptModal').classList.add('open');
+}
+
+function closeReceiptModal() {
+  document.getElementById('receiptModal').classList.remove('open');
+}
+
+async function voidReceipt(id) {
+  const reason = prompt('Reason for voiding (optional):', '');
+  if (reason === null) return;
+  try {
+    const r = await fetch(`${API}/api/admin/loyalty/receipts/${encodeURIComponent(id)}/void?key=${encodeURIComponent(adminKey)}`, {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ reason })
+    });
+    if (!r.ok) { toast('Void failed', true); return; }
+    toast('Receipt voided');
+    loadLoyalty();
+  } catch (e) { toast('Network error', true); }
+}
+
+async function adjustPoints(email, currentPoints) {
+  const deltaStr = prompt(`Adjust points for ${email} (current: ${currentPoints}).\nEnter delta (e.g. +50 or -25):`, '');
+  if (deltaStr === null) return;
+  const delta = parseInt(deltaStr, 10);
+  if (!Number.isFinite(delta)) { toast('Invalid number', true); return; }
+  const reason = prompt('Reason (optional):', '') || '';
+  try {
+    const r = await fetch(`${API}/api/admin/loyalty/accounts/${encodeURIComponent(email)}/adjust?key=${encodeURIComponent(adminKey)}`, {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ delta, reason })
+    });
+    if (!r.ok) { toast('Adjust failed', true); return; }
+    toast('Points adjusted');
+    loadLoyalty();
+  } catch (e) { toast('Network error', true); }
+}
+
+async function toggleBlock(email, newStatus) {
+  if (!confirm(`Set ${email} to "${newStatus}"?`)) return;
+  try {
+    const r = await fetch(`${API}/api/admin/loyalty/accounts/${encodeURIComponent(email)}/status?key=${encodeURIComponent(adminKey)}`, {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ status: newStatus })
+    });
+    if (!r.ok) { toast('Update failed', true); return; }
+    toast(`Account ${newStatus}`);
+    loadLoyalty();
+  } catch (e) { toast('Network error', true); }
+}
+
+function focusAccount(email) {
+  switchLoyaltySubtab('accounts');
+  document.getElementById('loyaltySearch').value = email;
+  renderLoyalty();
+}
+
+function fmtDate(iso) {
+  if (!iso) return '--';
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  return d.toLocaleDateString();
+}
+function fmtDateTime(iso) {
+  if (!iso) return '--';
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
 // --- Helpers ---

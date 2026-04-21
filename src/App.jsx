@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 
+const isValidEmailStr = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(e || "").trim());
+
 // --- Levenshtein edit distance ---------------------------------------------
 const editDistance = (a, b) => {
   if (a.length === 0) return b.length;
@@ -272,7 +274,27 @@ function NearestRetailers() {
 }
 
 export default function DragonflyScanner() {
-  const [screen, setScreen] = useState("home"); // home | scan | result | signup | thanks
+  const [screen, setScreen] = useState("home"); // home | scan | result | signup | thanks | loyaltyEmail | loyaltyCode | loyaltyScan | loyaltyResult | loyaltyAccount
+  // --- Loyalty state ---
+  const [loyaltyToken, setLoyaltyToken] = useState(() => {
+    try { return localStorage.getItem("df_loyalty_token") || ""; } catch (e) { return ""; }
+  });
+  const [loyaltyAccount, setLoyaltyAccount] = useState(null); // { email, name, points }
+  const [loyaltyEmail, setLoyaltyEmail] = useState("");
+  const [loyaltyName, setLoyaltyName] = useState("");
+  const [loyaltyCode, setLoyaltyCode] = useState("");
+  const [loyaltyAge, setLoyaltyAge] = useState(false);
+  const [loyaltyLoading, setLoyaltyLoading] = useState(false);
+  const [loyaltyError, setLoyaltyError] = useState(null);
+  const [loyaltyInfo, setLoyaltyInfo] = useState(null);
+  const [loyaltyCodeExpiresAt, setLoyaltyCodeExpiresAt] = useState(0);
+  const [loyaltyReceiptResult, setLoyaltyReceiptResult] = useState(null); // last scanned receipt
+  const [loyaltyReceipts, setLoyaltyReceipts] = useState([]);
+  const [loyaltyIncludeLocation, setLoyaltyIncludeLocation] = useState(false);
+  const [loyaltyLocation, setLoyaltyLocation] = useState(null); // { lat, lng, accuracy }
+  const [loyaltyLocError, setLoyaltyLocError] = useState(null);
+  const [captureMode, setCaptureMode] = useState("product"); // "product" | "receipt"
+
   const [scannedStrain, setScannedStrain] = useState(null);
   const [labelRead, setLabelRead] = useState(null); // for strains not in DB
   const [scannedImage, setScannedImage] = useState(null); // captured photo for display
@@ -597,10 +619,174 @@ export default function DragonflyScanner() {
     if (file) {
       const reader = new FileReader();
       reader.onload = (ev) => {
-        identifyWithVision(ev.target.result);
+        if (captureMode === "receipt") scanReceiptWithVision(ev.target.result);
+        else identifyWithVision(ev.target.result);
       };
       reader.readAsDataURL(file);
     }
+  };
+
+  // --- Loyalty: persist token & helpers -----------------------------------
+  const persistToken = useCallback((token) => {
+    setLoyaltyToken(token || "");
+    try {
+      if (token) localStorage.setItem("df_loyalty_token", token);
+      else localStorage.removeItem("df_loyalty_token");
+    } catch (e) {}
+  }, []);
+
+  const loyaltyFetch = useCallback(async (url, opts = {}) => {
+    const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
+    if (loyaltyToken) headers.Authorization = `Bearer ${loyaltyToken}`;
+    const res = await fetch(url, { ...opts, headers });
+    if (res.status === 401) {
+      persistToken("");
+      setLoyaltyAccount(null);
+    }
+    return res;
+  }, [loyaltyToken, persistToken]);
+
+  const loadLoyaltyAccount = useCallback(async () => {
+    if (!loyaltyToken) return null;
+    try {
+      const r = await loyaltyFetch("/api/loyalty/account");
+      if (!r.ok) return null;
+      const data = await r.json();
+      setLoyaltyAccount(data.account);
+      setLoyaltyReceipts(data.receipts || []);
+      return data.account;
+    } catch (e) { return null; }
+  }, [loyaltyToken, loyaltyFetch]);
+
+  useEffect(() => {
+    if (loyaltyToken && !loyaltyAccount) loadLoyaltyAccount();
+  }, [loyaltyToken, loyaltyAccount, loadLoyaltyAccount]);
+
+  const startLoyaltyFlow = () => {
+    setLoyaltyError(null);
+    setLoyaltyInfo(null);
+    if (loyaltyToken && loyaltyAccount) {
+      setCaptureMode("receipt");
+      setScreen("loyaltyScan");
+      startCamera();
+    } else {
+      setScreen("loyaltyEmail");
+    }
+  };
+
+  const loyaltyRequestCode = async () => {
+    if (!loyaltyEmail || !loyaltyAge) return;
+    setLoyaltyLoading(true); setLoyaltyError(null); setLoyaltyInfo(null);
+    try {
+      const r = await fetch("/api/loyalty/request-code", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: loyaltyEmail.trim() }),
+      });
+      const data = await r.json();
+      if (!r.ok) { setLoyaltyError(data.error || "Could not send code."); return; }
+      setLoyaltyCodeExpiresAt(Date.now() + (data.expiresInSec || 600) * 1000);
+      setLoyaltyInfo("Check your email for a 6-digit code.");
+      setLoyaltyCode("");
+      setScreen("loyaltyCode");
+    } catch (err) {
+      setLoyaltyError("Couldn't reach server. Try again.");
+    } finally { setLoyaltyLoading(false); }
+  };
+
+  const loyaltyVerifyCode = async () => {
+    if (!/^\d{6}$/.test(loyaltyCode)) { setLoyaltyError("Enter the 6-digit code."); return; }
+    setLoyaltyLoading(true); setLoyaltyError(null);
+    try {
+      const r = await fetch("/api/loyalty/verify-code", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: loyaltyEmail.trim(), code: loyaltyCode, name: loyaltyName.trim() || undefined }),
+      });
+      const data = await r.json();
+      if (!r.ok) { setLoyaltyError(data.error || "Verification failed."); return; }
+      persistToken(data.token);
+      setLoyaltyAccount(data.account);
+      setLoyaltyCode("");
+      setCaptureMode("receipt");
+      setScreen("loyaltyScan");
+      startCamera();
+    } catch (err) {
+      setLoyaltyError("Couldn't reach server. Try again.");
+    } finally { setLoyaltyLoading(false); }
+  };
+
+  const requestLocation = () => {
+    setLoyaltyLocError(null);
+    if (!navigator.geolocation) { setLoyaltyLocError("Location not supported on this device."); setLoyaltyIncludeLocation(false); return; }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setLoyaltyLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy, source: "browser" });
+        setLoyaltyIncludeLocation(true);
+      },
+      (err) => {
+        setLoyaltyLocError(err.code === 1 ? "Location permission denied." : "Couldn't get location.");
+        setLoyaltyIncludeLocation(false);
+      },
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
+    );
+  };
+
+  const scanReceiptWithVision = useCallback(async (imageSource) => {
+    if (!loyaltyToken) { setLoyaltyError("Please verify your email first."); setScreen("loyaltyEmail"); return; }
+    setScanning(true); setScanProgress(0); setLoyaltyError(null); setScanStatus("Reading receipt...");
+    const progressTimer = setInterval(() => setScanProgress(p => Math.min(p + 3, 90)), 150);
+    try {
+      let imageSrc = imageSource;
+      if (!imageSrc && videoRef.current && streamRef.current) {
+        const canvas = document.createElement("canvas");
+        const video = videoRef.current;
+        canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+        canvas.getContext("2d").drawImage(video, 0, 0);
+        imageSrc = canvas.toDataURL("image/jpeg", 0.9);
+      }
+      if (!imageSrc) throw new Error("No image captured");
+      setScannedImage(imageSrc);
+      stopCamera();
+
+      const resized = await resizeImage(imageSrc, 1400);
+      const base64 = resized.split(",")[1];
+      const mediaType = resized.startsWith("data:image/png") ? "image/png" : "image/jpeg";
+
+      const body = { image_base64: base64, media_type: mediaType };
+      if (loyaltyIncludeLocation && loyaltyLocation) body.location = loyaltyLocation;
+
+      const r = await loyaltyFetch("/api/loyalty/scan-receipt", { method: "POST", body: JSON.stringify(body) });
+      const data = await r.json();
+      clearInterval(progressTimer);
+      setScanProgress(100);
+
+      if (!r.ok) {
+        const msg = data.error || "Receipt scan failed.";
+        setLoyaltyError(msg);
+        if (data.duplicate) setLoyaltyError(`${msg} (already submitted by ${data.duplicate.email})`);
+        setScanning(false); setScanStatus("");
+        return;
+      }
+
+      setLoyaltyReceiptResult(data.receipt);
+      setLoyaltyAccount(data.account);
+      setTimeout(() => { setScanning(false); setScanProgress(0); setScanStatus(""); setScreen("loyaltyResult"); }, 300);
+    } catch (err) {
+      clearInterval(progressTimer);
+      console.error("Receipt scan error:", err);
+      setLoyaltyError(err.message?.includes("fetch") ? "Can't reach server. Check connection." : "Receipt scan failed. Try again.");
+      setScanning(false); setScanProgress(0); setScanStatus("");
+    }
+  }, [loyaltyToken, loyaltyFetch, loyaltyIncludeLocation, loyaltyLocation, stopCamera]);
+
+  const loyaltySignOut = () => {
+    persistToken("");
+    setLoyaltyAccount(null);
+    setLoyaltyReceipts([]);
+    setLoyaltyReceiptResult(null);
+    setLoyaltyEmail(""); setLoyaltyName(""); setLoyaltyCode(""); setLoyaltyAge(false);
+    setLoyaltyLocation(null); setLoyaltyIncludeLocation(false);
+    setCaptureMode("product");
+    setScreen("home");
   };
 
   const goHome = () => {
@@ -613,6 +799,9 @@ export default function DragonflyScanner() {
     setShowSearch(false);
     setScanning(false);
     setScanProgress(0);
+    setCaptureMode("product");
+    setLoyaltyError(null);
+    setLoyaltyInfo(null);
   };
 
   const typeColor = (type) => {
@@ -726,6 +915,28 @@ export default function DragonflyScanner() {
       cursor: "pointer",
       transition: "transform 0.15s, opacity 0.15s",
       boxShadow: `0 0 40px ${COLORS.accentDim}`,
+      WebkitTapHighlightColor: "transparent",
+      touchAction: "manipulation",
+    },
+    pointsBtn: {
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 12,
+      background: `linear-gradient(135deg, ${COLORS.accent} 0%, #e4ff4b 60%, #9eff00 100%)`,
+      color: "#000",
+      border: "none",
+      padding: "22px 32px",
+      minHeight: 72,
+      borderRadius: 50,
+      fontSize: 19,
+      fontFamily: FONTS.display,
+      fontWeight: 700,
+      letterSpacing: "0.1em",
+      textTransform: "uppercase",
+      cursor: "pointer",
+      transition: "transform 0.15s, opacity 0.15s, box-shadow 0.2s",
+      boxShadow: `0 0 60px rgba(200,255,0,0.55), 0 6px 24px rgba(0,0,0,0.4)`,
       WebkitTapHighlightColor: "transparent",
       touchAction: "manipulation",
     },
@@ -1093,6 +1304,118 @@ export default function DragonflyScanner() {
       opacity: 0.4,
       cursor: "not-allowed",
     },
+    // Loyalty
+    loyaltyBadge: {
+      display: "inline-block",
+      padding: "5px 12px",
+      background: COLORS.accentDim,
+      color: COLORS.accent,
+      borderRadius: 999,
+      fontSize: 10,
+      fontFamily: FONTS.display,
+      fontWeight: 600,
+      letterSpacing: "0.2em",
+      textTransform: "uppercase",
+      marginBottom: 14,
+    },
+    loyaltyHeaderCard: {
+      width: "100%",
+      maxWidth: 400,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 12,
+      padding: "16px 18px",
+      background: COLORS.bgCard,
+      border: `1px solid ${COLORS.border}`,
+      borderRadius: 14,
+    },
+    smallOutlineBtn: {
+      background: "transparent",
+      border: `1px solid ${COLORS.borderLight}`,
+      color: COLORS.textMuted,
+      padding: "8px 14px",
+      borderRadius: 8,
+      fontSize: 12,
+      fontFamily: FONTS.display,
+      fontWeight: 500,
+      letterSpacing: "0.08em",
+      textTransform: "uppercase",
+      cursor: "pointer",
+    },
+    locationRow: {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 10,
+      padding: "12px 14px",
+      background: COLORS.bgCard,
+      border: `1px solid ${COLORS.border}`,
+      borderRadius: 10,
+    },
+    errorBox: {
+      marginTop: 14,
+      padding: "10px 14px",
+      background: "rgba(239,68,68,0.1)",
+      border: "1px solid rgba(239,68,68,0.3)",
+      borderRadius: 8,
+      color: "#ef4444",
+      fontSize: 13,
+      textAlign: "center",
+    },
+    infoBox: {
+      marginTop: 14,
+      padding: "10px 14px",
+      background: COLORS.accentDim,
+      border: `1px solid rgba(200,255,0,0.3)`,
+      borderRadius: 8,
+      color: COLORS.accent,
+      fontSize: 13,
+      textAlign: "center",
+    },
+    linkBtn: {
+      display: "block",
+      width: "100%",
+      background: "transparent",
+      border: "none",
+      color: COLORS.textMuted,
+      fontFamily: FONTS.display,
+      fontSize: 12,
+      letterSpacing: "0.12em",
+      textTransform: "uppercase",
+      cursor: "pointer",
+      textDecoration: "underline",
+      textUnderlineOffset: 4,
+    },
+    receiptRow: {
+      display: "flex",
+      justifyContent: "space-between",
+      padding: "8px 0",
+      fontSize: 14,
+      color: COLORS.textMuted,
+      borderBottom: `1px solid ${COLORS.border}`,
+    },
+    itemRow: {
+      display: "flex",
+      justifyContent: "space-between",
+      padding: "6px 0",
+      fontSize: 13,
+      color: COLORS.textMuted,
+    },
+    flagsBox: {
+      padding: "14px 16px",
+      background: "rgba(245,158,11,0.08)",
+      border: "1px solid rgba(245,158,11,0.3)",
+      borderRadius: 10,
+      marginBottom: 8,
+    },
+    receiptCard: {
+      padding: "12px 14px",
+      background: COLORS.bgElevated,
+      border: `1px solid ${COLORS.border}`,
+      borderRadius: 10,
+      marginBottom: 10,
+    },
     // Thanks screen
     thanksContainer: {
       padding: "80px 24px",
@@ -1367,8 +1690,29 @@ export default function DragonflyScanner() {
         {/* CTAs */}
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, width: "100%", maxWidth: 340, position: "relative", zIndex: 3 }}>
           <button
+            style={{ ...styles.pointsBtn, width: "100%" }}
+            onClick={startLoyaltyFlow}
+          >
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ flexShrink: 0 }}>
+              <polygon points="12 2 15 8.5 22 9.3 17 14.1 18.2 21 12 17.8 5.8 21 7 14.1 2 9.3 9 8.5 12 2" />
+            </svg>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", lineHeight: 1.1 }}>
+              <div style={{ fontSize: 19, fontWeight: 700, letterSpacing: "0.1em" }}>
+                {loyaltyAccount ? `MY POINTS: ${loyaltyAccount.points}` : "SCAN YOUR POINTS"}
+              </div>
+              <div style={{ fontSize: 11, fontWeight: 500, letterSpacing: "0.18em", opacity: 0.85, marginTop: 3 }}>
+                {loyaltyAccount ? "Tap to scan a receipt" : "Get Free Stuff"}
+              </div>
+            </div>
+          </button>
+          {loyaltyAccount && (
+            <div style={{ fontSize: 11, color: COLORS.textMuted, fontFamily: FONTS.display, letterSpacing: "0.12em", textTransform: "uppercase", marginTop: -4 }}>
+              Signed in as {loyaltyAccount.email}
+            </div>
+          )}
+          <button
             style={{ ...styles.scanBtn, width: "100%" }}
-            onClick={() => { setScreen("scan"); startCamera(); }}
+            onClick={() => { setCaptureMode("product"); setScreen("scan"); startCamera(); }}
           >
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <path d="M3 7V5a2 2 0 0 1 2-2h2" /><path d="M17 3h2a2 2 0 0 1 2 2v2" />
@@ -1837,6 +2181,327 @@ export default function DragonflyScanner() {
     </div>
   );
 
+  // --- Render: Loyalty Email Entry -----------------------------------------
+  const renderLoyaltyEmail = () => {
+    const canSend = isValidEmailStr(loyaltyEmail) && loyaltyAge && !loyaltyLoading;
+    return (
+      <div style={styles.formContainer}>
+        <button style={styles.backBtn} onClick={goHome}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M19 12H5" /><path d="m12 19-7-7 7-7" />
+          </svg>
+          Back
+        </button>
+        <div style={{ padding: "24px 0 0", textAlign: "center" }}>
+          <div style={styles.loyaltyBadge}>REWARDS</div>
+          <h2 style={styles.formTitle}>Get Your Points</h2>
+          <p style={styles.formSub}>Earn 1 point per $1 spent on Dragonfly products. We'll email a 6-digit code to verify your account.</p>
+        </div>
+
+        <div style={styles.inputGroup}>
+          <label style={styles.inputLabel}>Name (optional)</label>
+          <input style={styles.input} placeholder="Your name" value={loyaltyName} onChange={e => setLoyaltyName(e.target.value)} />
+        </div>
+        <div style={styles.inputGroup}>
+          <label style={styles.inputLabel}>Email</label>
+          <input style={styles.input} type="email" inputMode="email" autoComplete="email" placeholder="you@email.com"
+            value={loyaltyEmail} onChange={e => setLoyaltyEmail(e.target.value)} />
+        </div>
+        <div style={styles.checkboxRow}>
+          <input type="checkbox" style={styles.checkbox} checked={loyaltyAge} onChange={e => setLoyaltyAge(e.target.checked)} />
+          <label style={styles.checkboxLabel}>I confirm I am 21 years of age or older and agree to receive loyalty program communications.</label>
+        </div>
+
+        <button
+          style={{ ...styles.submitBtn, ...(canSend ? {} : styles.submitBtnDisabled) }}
+          disabled={!canSend}
+          onClick={loyaltyRequestCode}
+        >
+          {loyaltyLoading ? "Sending..." : "Send Verification Code"}
+        </button>
+        {loyaltyError && <div style={styles.errorBox}>{loyaltyError}</div>}
+      </div>
+    );
+  };
+
+  // --- Render: Loyalty Code Verification -----------------------------------
+  const renderLoyaltyCode = () => {
+    const canVerify = /^\d{6}$/.test(loyaltyCode) && !loyaltyLoading;
+    const secLeft = Math.max(0, Math.ceil((loyaltyCodeExpiresAt - Date.now()) / 1000));
+    return (
+      <div style={styles.formContainer}>
+        <button style={styles.backBtn} onClick={() => { setScreen("loyaltyEmail"); setLoyaltyError(null); }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M19 12H5" /><path d="m12 19-7-7 7-7" />
+          </svg>
+          Back
+        </button>
+        <div style={{ padding: "24px 0 0", textAlign: "center" }}>
+          <div style={styles.loyaltyBadge}>VERIFY</div>
+          <h2 style={styles.formTitle}>Enter Code</h2>
+          <p style={styles.formSub}>We sent a 6-digit code to <strong style={{ color: COLORS.accent }}>{loyaltyEmail}</strong>.{secLeft > 0 ? ` Expires in ${Math.floor(secLeft / 60)}:${String(secLeft % 60).padStart(2, "0")}.` : ""}</p>
+        </div>
+        <div style={styles.inputGroup}>
+          <label style={styles.inputLabel}>6-Digit Code</label>
+          <input
+            style={{ ...styles.input, letterSpacing: "0.5em", textAlign: "center", fontSize: 24, fontFamily: FONTS.mono }}
+            inputMode="numeric" pattern="[0-9]*" maxLength={6}
+            placeholder=""
+            value={loyaltyCode}
+            onChange={e => setLoyaltyCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+          />
+        </div>
+        <button
+          style={{ ...styles.submitBtn, ...(canVerify ? {} : styles.submitBtnDisabled) }}
+          disabled={!canVerify}
+          onClick={loyaltyVerifyCode}
+        >
+          {loyaltyLoading ? "Verifying..." : "Verify & Continue"}
+        </button>
+        <button
+          style={{ ...styles.linkBtn, marginTop: 16 }}
+          onClick={() => { setLoyaltyCode(""); setLoyaltyError(null); loyaltyRequestCode(); }}
+          disabled={loyaltyLoading}
+        >
+          Resend code
+        </button>
+        {loyaltyInfo && !loyaltyError && <div style={styles.infoBox}>{loyaltyInfo}</div>}
+        {loyaltyError && <div style={styles.errorBox}>{loyaltyError}</div>}
+      </div>
+    );
+  };
+
+  // --- Render: Loyalty Scan Receipt ---------------------------------------
+  const renderLoyaltyScan = () => (
+    <div style={styles.scanContainer}>
+      <button style={styles.backBtn} onClick={goHome}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M19 12H5" /><path d="m12 19-7-7 7-7" />
+        </svg>
+        Back
+      </button>
+
+      {loyaltyAccount && (
+        <div style={styles.loyaltyHeaderCard}>
+          <div>
+            <div style={{ fontSize: 11, color: COLORS.textMuted, fontFamily: FONTS.display, letterSpacing: "0.15em", textTransform: "uppercase" }}>Your Points</div>
+            <div style={{ fontSize: 36, fontFamily: FONTS.display, fontWeight: 700, color: COLORS.accent }}>{loyaltyAccount.points}</div>
+            <div style={{ fontSize: 11, color: COLORS.textDim }}>{loyaltyAccount.email}</div>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <button style={styles.smallOutlineBtn} onClick={() => { stopCamera(); loadLoyaltyAccount(); setScreen("loyaltyAccount"); }}>History</button>
+            <button style={{ ...styles.smallOutlineBtn, borderColor: "rgba(239,68,68,0.4)", color: "#ef4444" }} onClick={loyaltySignOut}>Sign out</button>
+          </div>
+        </div>
+      )}
+
+      <div style={{ textAlign: "center", marginTop: 4 }}>
+        <h2 style={{ fontFamily: FONTS.display, fontSize: 24, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em" }}>Scan Your Receipt</h2>
+        <p style={{ fontSize: 13, color: COLORS.textMuted, marginTop: 6, maxWidth: 340, marginLeft: "auto", marginRight: "auto" }}>
+          Snap a photo of your dispensary receipt. We auto-detect Dragonfly items and credit 1 point per $1 spent.
+        </p>
+      </div>
+
+      <div style={styles.videoWrapper}>
+        {!cameraError && <video ref={videoRef} style={styles.video} muted playsInline />}
+        {scanning ? (
+          <div style={styles.scanOverlay}>
+            <div style={{ ...styles.scanFrame, width: "85%", height: "80%" }} />
+            <div style={{ position: "absolute", bottom: 16, left: 0, right: 0, textAlign: "center", color: COLORS.accent, fontFamily: FONTS.display, letterSpacing: "0.1em", textTransform: "uppercase", fontSize: 13 }}>
+              {scanStatus || "Reading receipt..."}
+            </div>
+          </div>
+        ) : (
+          !cameraError && <div style={styles.scanOverlay}><div style={{ ...styles.scanFrame, width: "85%", height: "80%" }} /></div>
+        )}
+        {cameraError && (
+          <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, textAlign: "center", color: COLORS.textMuted, fontSize: 13 }}>{cameraError}</div>
+        )}
+      </div>
+
+      {scanning && <div style={styles.progressBar}><div style={styles.progressFill(scanProgress)} /></div>}
+
+      <div style={{ width: "100%", maxWidth: 400, display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={styles.locationRow}>
+          <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", flex: 1 }}>
+            <input
+              type="checkbox"
+              style={{ ...styles.checkbox, width: 18, height: 18, minWidth: 18 }}
+              checked={loyaltyIncludeLocation}
+              onChange={e => {
+                if (e.target.checked) requestLocation();
+                else { setLoyaltyIncludeLocation(false); setLoyaltyLocation(null); setLoyaltyLocError(null); }
+              }}
+            />
+            <span style={{ fontSize: 13, color: COLORS.text }}>I'm at the dispensary (include location)</span>
+          </label>
+          {loyaltyLocation && loyaltyIncludeLocation && (
+            <span style={{ fontSize: 10, color: COLORS.accent, fontFamily: FONTS.mono }}>
+              {loyaltyLocation.accuracy ? `±${Math.round(loyaltyLocation.accuracy)}m` : "OK"}
+            </span>
+          )}
+        </div>
+        {loyaltyLocError && <div style={{ fontSize: 11, color: "#ef4444", marginTop: -6 }}>{loyaltyLocError}</div>}
+
+        <button
+          style={{ ...styles.scanBtn, width: "100%" }}
+          disabled={scanning}
+          onClick={() => scanReceiptWithVision(null)}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+            <circle cx="12" cy="13" r="4" />
+          </svg>
+          {scanning ? "Scanning..." : "Capture Receipt"}
+        </button>
+
+        <button
+          style={{ ...styles.browseBtn, width: "100%", marginTop: 0 }}
+          onClick={() => fileInputRef.current?.click()}
+          disabled={scanning}
+        >
+          Upload Photo Instead
+        </button>
+        <input ref={fileInputRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={handleFileUpload} />
+      </div>
+
+      {loyaltyError && <div style={styles.errorBox}>{loyaltyError}</div>}
+    </div>
+  );
+
+  // --- Render: Loyalty Result ---------------------------------------------
+  const renderLoyaltyResult = () => {
+    const r = loyaltyReceiptResult;
+    if (!r) return null;
+    const dragonflyItems = (r.items || []).filter(i => i.is_dragonfly);
+    const otherItems = (r.items || []).filter(i => !i.is_dragonfly);
+    const hasFlags = r.flags?.length > 0;
+    return (
+      <div style={styles.formContainer}>
+        <button style={styles.backBtn} onClick={goHome}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M19 12H5" /><path d="m12 19-7-7 7-7" />
+          </svg>
+          Home
+        </button>
+
+        <div style={{ padding: "16px 0 24px", textAlign: "center" }}>
+          <div style={styles.loyaltyBadge}>{r.pointsAwarded > 0 ? "POINTS AWARDED" : "RECEIPT RECORDED"}</div>
+          <div style={{ fontSize: 64, fontFamily: FONTS.display, fontWeight: 700, color: COLORS.accent, lineHeight: 1, margin: "12px 0" }}>
+            {r.pointsAwarded > 0 ? `+${r.pointsAwarded}` : "0"}
+          </div>
+          <div style={{ fontSize: 13, color: COLORS.textMuted, fontFamily: FONTS.display, letterSpacing: "0.12em", textTransform: "uppercase" }}>
+            Total balance: {loyaltyAccount?.points ?? "--"} pts
+          </div>
+        </div>
+
+        <div style={{ ...styles.infoSection, marginBottom: 16 }}>
+          <div style={styles.sectionTitle}>Receipt</div>
+          <div style={styles.receiptRow}><span>Retailer</span><span>{r.retailer}</span></div>
+          <div style={styles.receiptRow}><span>Date</span><span>{r.date}</span></div>
+          <div style={styles.receiptRow}><span>Total</span><span>${Number(r.total).toFixed(2)}</span></div>
+          <div style={{ ...styles.receiptRow, color: COLORS.accent }}>
+            <span>Dragonfly subtotal</span><span>${Number(r.dragonflySubtotal).toFixed(2)}</span>
+          </div>
+        </div>
+
+        {dragonflyItems.length > 0 && (
+          <div style={{ ...styles.infoSection, marginBottom: 16 }}>
+            <div style={styles.sectionTitle}>Dragonfly Items ({dragonflyItems.length})</div>
+            {dragonflyItems.map((i, idx) => (
+              <div key={idx} style={styles.itemRow}>
+                <span style={{ color: COLORS.text }}>{i.name}{i.qty > 1 ? ` x${i.qty}` : ""}</span>
+                <span style={{ color: COLORS.accent, fontFamily: FONTS.mono }}>${Number(i.price).toFixed(2)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {otherItems.length > 0 && (
+          <div style={{ ...styles.infoSection, marginBottom: 16 }}>
+            <div style={styles.sectionTitle}>Other Items ({otherItems.length}) — no points</div>
+            {otherItems.map((i, idx) => (
+              <div key={idx} style={{ ...styles.itemRow, color: COLORS.textDim }}>
+                <span>{i.name}{i.qty > 1 ? ` x${i.qty}` : ""}</span>
+                <span style={{ fontFamily: FONTS.mono }}>${Number(i.price).toFixed(2)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {hasFlags && (
+          <div style={styles.flagsBox}>
+            <div style={{ fontSize: 11, color: "#f59e0b", fontFamily: FONTS.display, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: 6 }}>Under review</div>
+            <div style={{ fontSize: 13, color: COLORS.textMuted }}>
+              Points are credited, but our team may review this receipt: {r.flags.map(f => f.replace(/_/g, " ")).join(", ")}.
+            </div>
+          </div>
+        )}
+
+        <button style={{ ...styles.scanBtn, width: "100%", marginTop: 24 }}
+          onClick={() => { setLoyaltyReceiptResult(null); setCaptureMode("receipt"); setScreen("loyaltyScan"); startCamera(); }}>
+          Scan Another Receipt
+        </button>
+        <button style={{ ...styles.browseBtn, width: "100%" }}
+          onClick={() => { loadLoyaltyAccount(); setScreen("loyaltyAccount"); }}>
+          View My Account
+        </button>
+      </div>
+    );
+  };
+
+  // --- Render: Loyalty Account History ------------------------------------
+  const renderLoyaltyAccount = () => (
+    <div style={styles.formContainer}>
+      <button style={styles.backBtn} onClick={goHome}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M19 12H5" /><path d="m12 19-7-7 7-7" />
+        </svg>
+        Home
+      </button>
+      <div style={{ padding: "16px 0 24px", textAlign: "center" }}>
+        <div style={styles.loyaltyBadge}>YOUR REWARDS</div>
+        <div style={{ fontSize: 64, fontFamily: FONTS.display, fontWeight: 700, color: COLORS.accent, lineHeight: 1, margin: "12px 0" }}>
+          {loyaltyAccount?.points ?? "--"}
+        </div>
+        <div style={{ fontSize: 13, color: COLORS.textMuted }}>{loyaltyAccount?.email}</div>
+      </div>
+
+      <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
+        <button style={{ ...styles.scanBtn, flex: 1 }}
+          onClick={() => { setCaptureMode("receipt"); setScreen("loyaltyScan"); startCamera(); }}>
+          Scan Receipt
+        </button>
+        <button style={{ ...styles.smallOutlineBtn, borderColor: "rgba(239,68,68,0.4)", color: "#ef4444", padding: "10px 16px" }} onClick={loyaltySignOut}>
+          Sign out
+        </button>
+      </div>
+
+      <div style={styles.infoSection}>
+        <div style={styles.sectionTitle}>Recent Receipts ({loyaltyReceipts.length})</div>
+        {loyaltyReceipts.length === 0 ? (
+          <div style={{ color: COLORS.textDim, fontSize: 13, textAlign: "center", padding: "24px 0" }}>No receipts yet. Scan your first one to earn points.</div>
+        ) : loyaltyReceipts.map(rc => (
+          <div key={rc.id} style={styles.receiptCard}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: COLORS.text }}>{rc.retailer}</div>
+                <div style={{ fontSize: 11, color: COLORS.textDim, fontFamily: FONTS.mono }}>{rc.date} · ${Number(rc.total).toFixed(2)}</div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: 18, fontWeight: 700, color: rc.status === "voided" ? COLORS.textDim : COLORS.accent, fontFamily: FONTS.display, textDecoration: rc.status === "voided" ? "line-through" : "none" }}>
+                  +{rc.pointsAwarded}
+                </div>
+                {rc.status === "voided" && <div style={{ fontSize: 10, color: "#ef4444", textTransform: "uppercase", letterSpacing: "0.1em" }}>Voided</div>}
+                {rc.flags?.length > 0 && rc.status !== "voided" && <div style={{ fontSize: 10, color: "#f59e0b", textTransform: "uppercase", letterSpacing: "0.1em" }}>Under review</div>}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
   // --- Main Render ---------------------------------------------------------
   return (
     <div style={styles.app}>
@@ -1884,6 +2549,11 @@ export default function DragonflyScanner() {
       {screen === "result" && renderResult()}
       {screen === "signup" && renderSignup()}
       {screen === "thanks" && renderThanks()}
+      {screen === "loyaltyEmail" && renderLoyaltyEmail()}
+      {screen === "loyaltyCode" && renderLoyaltyCode()}
+      {screen === "loyaltyScan" && renderLoyaltyScan()}
+      {screen === "loyaltyResult" && renderLoyaltyResult()}
+      {screen === "loyaltyAccount" && renderLoyaltyAccount()}
 
       {/* Footer */}
       <footer style={styles.footer}>
