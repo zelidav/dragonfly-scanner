@@ -274,7 +274,7 @@ function NearestRetailers() {
 }
 
 export default function DragonflyScanner() {
-  const [screen, setScreen] = useState("home"); // home | scan | result | signup | thanks | loyaltyEmail | loyaltyCode | loyaltyScan | loyaltyResult | loyaltyAccount
+  const [screen, setScreen] = useState("home"); // home | scan | result | signup | thanks | loyaltyEmail | loyaltyScan | loyaltyResult | loyaltyAccount
   // --- Loyalty state ---
   const [loyaltyToken, setLoyaltyToken] = useState(() => {
     try { return localStorage.getItem("df_loyalty_token") || ""; } catch (e) { return ""; }
@@ -282,12 +282,9 @@ export default function DragonflyScanner() {
   const [loyaltyAccount, setLoyaltyAccount] = useState(null); // { email, name, points }
   const [loyaltyEmail, setLoyaltyEmail] = useState("");
   const [loyaltyName, setLoyaltyName] = useState("");
-  const [loyaltyCode, setLoyaltyCode] = useState("");
   const [loyaltyAge, setLoyaltyAge] = useState(false);
   const [loyaltyLoading, setLoyaltyLoading] = useState(false);
   const [loyaltyError, setLoyaltyError] = useState(null);
-  const [loyaltyInfo, setLoyaltyInfo] = useState(null);
-  const [loyaltyCodeExpiresAt, setLoyaltyCodeExpiresAt] = useState(0);
   const [loyaltyReceiptResult, setLoyaltyReceiptResult] = useState(null); // last scanned receipt
   const [loyaltyReceipts, setLoyaltyReceipts] = useState([]);
   const [loyaltyIncludeLocation, setLoyaltyIncludeLocation] = useState(false);
@@ -664,7 +661,6 @@ export default function DragonflyScanner() {
 
   const startLoyaltyFlow = () => {
     setLoyaltyError(null);
-    setLoyaltyInfo(null);
     if (loyaltyToken && loyaltyAccount) {
       setCaptureMode("receipt");
       setScreen("loyaltyScan");
@@ -674,38 +670,18 @@ export default function DragonflyScanner() {
     }
   };
 
-  const loyaltyRequestCode = async () => {
+  const loyaltySignin = async () => {
     if (!loyaltyEmail || !loyaltyAge) return;
-    setLoyaltyLoading(true); setLoyaltyError(null); setLoyaltyInfo(null);
-    try {
-      const r = await fetch("/api/loyalty/request-code", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: loyaltyEmail.trim() }),
-      });
-      const data = await r.json();
-      if (!r.ok) { setLoyaltyError(data.error || "Could not send code."); return; }
-      setLoyaltyCodeExpiresAt(Date.now() + (data.expiresInSec || 600) * 1000);
-      setLoyaltyInfo("Check your email for a 6-digit code.");
-      setLoyaltyCode("");
-      setScreen("loyaltyCode");
-    } catch (err) {
-      setLoyaltyError("Couldn't reach server. Try again.");
-    } finally { setLoyaltyLoading(false); }
-  };
-
-  const loyaltyVerifyCode = async () => {
-    if (!/^\d{6}$/.test(loyaltyCode)) { setLoyaltyError("Enter the 6-digit code."); return; }
     setLoyaltyLoading(true); setLoyaltyError(null);
     try {
-      const r = await fetch("/api/loyalty/verify-code", {
+      const r = await fetch("/api/loyalty/signin", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: loyaltyEmail.trim(), code: loyaltyCode, name: loyaltyName.trim() || undefined }),
+        body: JSON.stringify({ email: loyaltyEmail.trim(), name: loyaltyName.trim() || undefined }),
       });
       const data = await r.json();
-      if (!r.ok) { setLoyaltyError(data.error || "Verification failed."); return; }
+      if (!r.ok) { setLoyaltyError(data.error || "Sign-in failed."); return; }
       persistToken(data.token);
       setLoyaltyAccount(data.account);
-      setLoyaltyCode("");
       setCaptureMode("receipt");
       setScreen("loyaltyScan");
       startCamera();
@@ -783,7 +759,7 @@ export default function DragonflyScanner() {
     setLoyaltyAccount(null);
     setLoyaltyReceipts([]);
     setLoyaltyReceiptResult(null);
-    setLoyaltyEmail(""); setLoyaltyName(""); setLoyaltyCode(""); setLoyaltyAge(false);
+    setLoyaltyEmail(""); setLoyaltyName(""); setLoyaltyAge(false);
     setLoyaltyLocation(null); setLoyaltyIncludeLocation(false);
     setCaptureMode("product");
     setScreen("home");
@@ -801,7 +777,6 @@ export default function DragonflyScanner() {
     setScanProgress(0);
     setCaptureMode("product");
     setLoyaltyError(null);
-    setLoyaltyInfo(null);
   };
 
   const typeColor = (type) => {
@@ -2195,7 +2170,7 @@ export default function DragonflyScanner() {
         <div style={{ padding: "24px 0 0", textAlign: "center" }}>
           <div style={styles.loyaltyBadge}>REWARDS</div>
           <h2 style={styles.formTitle}>Get Your Points</h2>
-          <p style={styles.formSub}>Earn 1 point per $1 spent on Dragonfly products. We'll email a 6-digit code to verify your account.</p>
+          <p style={styles.formSub}>Earn 1 point per $1 spent on Dragonfly products. Enter your email to start earning — we'll use it as your loyalty account.</p>
         </div>
 
         <div style={styles.inputGroup}>
@@ -2204,8 +2179,11 @@ export default function DragonflyScanner() {
         </div>
         <div style={styles.inputGroup}>
           <label style={styles.inputLabel}>Email</label>
-          <input style={styles.input} type="email" inputMode="email" autoComplete="email" placeholder="you@email.com"
-            value={loyaltyEmail} onChange={e => setLoyaltyEmail(e.target.value)} />
+          <input
+            style={styles.input} type="email" inputMode="email" autoComplete="email" placeholder="you@email.com"
+            value={loyaltyEmail} onChange={e => setLoyaltyEmail(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter" && canSend) loyaltySignin(); }}
+          />
         </div>
         <div style={styles.checkboxRow}>
           <input type="checkbox" style={styles.checkbox} checked={loyaltyAge} onChange={e => setLoyaltyAge(e.target.checked)} />
@@ -2215,57 +2193,10 @@ export default function DragonflyScanner() {
         <button
           style={{ ...styles.submitBtn, ...(canSend ? {} : styles.submitBtnDisabled) }}
           disabled={!canSend}
-          onClick={loyaltyRequestCode}
+          onClick={loyaltySignin}
         >
-          {loyaltyLoading ? "Sending..." : "Send Verification Code"}
+          {loyaltyLoading ? "Starting..." : "Scan My Receipt"}
         </button>
-        {loyaltyError && <div style={styles.errorBox}>{loyaltyError}</div>}
-      </div>
-    );
-  };
-
-  // --- Render: Loyalty Code Verification -----------------------------------
-  const renderLoyaltyCode = () => {
-    const canVerify = /^\d{6}$/.test(loyaltyCode) && !loyaltyLoading;
-    const secLeft = Math.max(0, Math.ceil((loyaltyCodeExpiresAt - Date.now()) / 1000));
-    return (
-      <div style={styles.formContainer}>
-        <button style={styles.backBtn} onClick={() => { setScreen("loyaltyEmail"); setLoyaltyError(null); }}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M19 12H5" /><path d="m12 19-7-7 7-7" />
-          </svg>
-          Back
-        </button>
-        <div style={{ padding: "24px 0 0", textAlign: "center" }}>
-          <div style={styles.loyaltyBadge}>VERIFY</div>
-          <h2 style={styles.formTitle}>Enter Code</h2>
-          <p style={styles.formSub}>We sent a 6-digit code to <strong style={{ color: COLORS.accent }}>{loyaltyEmail}</strong>.{secLeft > 0 ? ` Expires in ${Math.floor(secLeft / 60)}:${String(secLeft % 60).padStart(2, "0")}.` : ""}</p>
-        </div>
-        <div style={styles.inputGroup}>
-          <label style={styles.inputLabel}>6-Digit Code</label>
-          <input
-            style={{ ...styles.input, letterSpacing: "0.5em", textAlign: "center", fontSize: 24, fontFamily: FONTS.mono }}
-            inputMode="numeric" pattern="[0-9]*" maxLength={6}
-            placeholder=""
-            value={loyaltyCode}
-            onChange={e => setLoyaltyCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-          />
-        </div>
-        <button
-          style={{ ...styles.submitBtn, ...(canVerify ? {} : styles.submitBtnDisabled) }}
-          disabled={!canVerify}
-          onClick={loyaltyVerifyCode}
-        >
-          {loyaltyLoading ? "Verifying..." : "Verify & Continue"}
-        </button>
-        <button
-          style={{ ...styles.linkBtn, marginTop: 16 }}
-          onClick={() => { setLoyaltyCode(""); setLoyaltyError(null); loyaltyRequestCode(); }}
-          disabled={loyaltyLoading}
-        >
-          Resend code
-        </button>
-        {loyaltyInfo && !loyaltyError && <div style={styles.infoBox}>{loyaltyInfo}</div>}
         {loyaltyError && <div style={styles.errorBox}>{loyaltyError}</div>}
       </div>
     );
@@ -2550,7 +2481,6 @@ export default function DragonflyScanner() {
       {screen === "signup" && renderSignup()}
       {screen === "thanks" && renderThanks()}
       {screen === "loyaltyEmail" && renderLoyaltyEmail()}
-      {screen === "loyaltyCode" && renderLoyaltyCode()}
       {screen === "loyaltyScan" && renderLoyaltyScan()}
       {screen === "loyaltyResult" && renderLoyaltyResult()}
       {screen === "loyaltyAccount" && renderLoyaltyAccount()}

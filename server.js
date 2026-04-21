@@ -178,16 +178,6 @@ function saveReceipts() { saveJsonFile(RECEIPTS_FILE, receiptsDB); }
 const normEmail = (e) => String(e || "").trim().toLowerCase();
 const isValidEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
 
-// --- Email verification codes (in-memory, 10min TTL) -------------------------
-const emailCodes = new Map(); // email -> { code, expiresAt, attempts, lastSentAt }
-const CODE_TTL_MS = 10 * 60 * 1000;
-const CODE_MIN_RESEND_MS = 30 * 1000;
-const CODE_MAX_ATTEMPTS = 5;
-
-function generateCode() {
-  return String(crypto.randomInt(0, 1000000)).padStart(6, "0");
-}
-
 // --- Session token (HMAC-signed) --------------------------------------------
 function loyaltySecret() {
   return process.env.LOYALTY_SECRET || process.env.ADMIN_KEY || "dev-loyalty-secret-change-me";
@@ -530,84 +520,13 @@ app.get("/api/signups", (req, res) => {
   res.json({ total: signups.length, signups });
 });
 
-// --- Loyalty: Request email verification code -----------------------------
-app.post("/api/loyalty/request-code", async (req, res) => {
+// --- Loyalty: Sign in (email-as-identity, no verification) ----------------
+app.post("/api/loyalty/signin", (req, res) => {
   const email = normEmail(req.body?.email);
-  if (!isValidEmail(email)) return res.status(400).json({ error: "Please enter a valid email address." });
-  if (accountsDB[email]?.status === "blocked") return res.status(403).json({ error: "This account is blocked. Contact support." });
-
-  const existing = emailCodes.get(email);
-  if (existing && existing.lastSentAt && Date.now() - existing.lastSentAt < CODE_MIN_RESEND_MS) {
-    const waitSec = Math.ceil((CODE_MIN_RESEND_MS - (Date.now() - existing.lastSentAt)) / 1000);
-    return res.status(429).json({ error: `Please wait ${waitSec}s before requesting another code.` });
-  }
-
-  const code = generateCode();
-  emailCodes.set(email, { code, expiresAt: Date.now() + CODE_TTL_MS, attempts: 0, lastSentAt: Date.now() });
-
-  const htmlBody = `
-    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 480px; margin: 0 auto;">
-      <div style="background: #0a0a0a; padding: 32px; border-radius: 12px; text-align: center;">
-        <h1 style="color: #c8ff00; font-size: 24px; margin: 0 0 4px; letter-spacing: 3px;">DRAGONFLY</h1>
-        <p style="color: #888; font-size: 13px; margin: 0 0 24px;">Loyalty Rewards</p>
-        <p style="color: #fff; font-size: 15px; margin: 0 0 8px;">Your verification code:</p>
-        <div style="background: #141414; border: 1px solid rgba(200,255,0,0.3); border-radius: 10px; padding: 20px; margin: 16px 0;">
-          <div style="color: #c8ff00; font-size: 36px; font-weight: 700; letter-spacing: 8px; font-family: 'Courier New', monospace;">${code}</div>
-        </div>
-        <p style="color: #888; font-size: 12px; margin: 16px 0 0;">This code expires in 10 minutes.</p>
-        <p style="color: #555; font-size: 11px; margin: 8px 0 0;">If you didn't request this, you can ignore this email.</p>
-      </div>
-    </div>
-  `;
-  const textBody = `Your Dragonfly verification code is: ${code}\n\nExpires in 10 minutes. If you didn't request this, ignore this email.`;
-
-  try {
-    if (process.env.RESEND_API_KEY) {
-      const emailRes = await fetch("https://api.resend.com/emails", {
-        method: "POST",
-        headers: { "Authorization": `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          from: `"Dragonfly Rewards" <${FROM_EMAIL}>`,
-          to: email,
-          subject: `Your Dragonfly code: ${code}`,
-          text: textBody,
-          html: htmlBody,
-        }),
-      });
-      if (!emailRes.ok) {
-        const errText = await emailRes.text();
-        console.error("Resend code send failed:", emailRes.status, errText);
-        return res.status(502).json({ error: "Could not send code. Try again." });
-      }
-      logActivity("loyalty_code", `Code sent to ${email}`);
-    } else {
-      console.log(`[DEV] Loyalty code for ${email}: ${code}`);
-      logActivity("loyalty_code", `[DEV] Code for ${email}: ${code}`);
-    }
-    res.json({ success: true, expiresInSec: 600 });
-  } catch (err) {
-    console.error("Code request error:", err.message);
-    res.status(500).json({ error: "Could not send code. Try again." });
-  }
-});
-
-// --- Loyalty: Verify code and issue session token --------------------------
-app.post("/api/loyalty/verify-code", (req, res) => {
-  const email = normEmail(req.body?.email);
-  const code = String(req.body?.code || "").trim();
   const name = String(req.body?.name || "").trim().slice(0, 80);
 
-  if (!isValidEmail(email)) return res.status(400).json({ error: "Invalid email." });
-  if (!/^\d{6}$/.test(code)) return res.status(400).json({ error: "Enter the 6-digit code." });
-
-  const rec = emailCodes.get(email);
-  if (!rec) return res.status(400).json({ error: "No code found. Request a new one." });
-  if (Date.now() > rec.expiresAt) { emailCodes.delete(email); return res.status(400).json({ error: "Code expired. Request a new one." }); }
-  rec.attempts = (rec.attempts || 0) + 1;
-  if (rec.attempts > CODE_MAX_ATTEMPTS) { emailCodes.delete(email); return res.status(429).json({ error: "Too many attempts. Request a new code." }); }
-  if (rec.code !== code) return res.status(400).json({ error: "Incorrect code.", attemptsLeft: CODE_MAX_ATTEMPTS - rec.attempts });
-
-  emailCodes.delete(email);
+  if (!isValidEmail(email)) return res.status(400).json({ error: "Please enter a valid email address." });
+  if (accountsDB[email]?.status === "blocked") return res.status(403).json({ error: "This account is blocked. Contact support." });
 
   const now = new Date().toISOString();
   if (!accountsDB[email]) {
