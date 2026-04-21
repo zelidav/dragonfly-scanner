@@ -1800,7 +1800,6 @@ export default function DragonflyScanner() {
             ref={fileInputRef}
             type="file"
             accept="image/*"
-            capture="environment"
             style={{ display: "none" }}
             onChange={handleFileUpload}
           />
@@ -2293,7 +2292,7 @@ export default function DragonflyScanner() {
         >
           Upload Photo Instead
         </button>
-        <input ref={fileInputRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={handleFileUpload} />
+        <input ref={fileInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleFileUpload} />
       </div>
 
       {loyaltyError && <div style={styles.errorBox}>{loyaltyError}</div>}
@@ -2452,8 +2451,6 @@ export default function DragonflyScanner() {
         button:active { transform: scale(0.97); opacity: 0.85; }
         select, textarea, input { font-size: 16px; } /* Prevent iOS zoom */
         ::-webkit-scrollbar { width: 0; display: none; }
-        /* Disable pull-to-refresh on mobile */
-        body { overscroll-behavior-y: contain; }
       `}</style>
 
       {/* Header */}
