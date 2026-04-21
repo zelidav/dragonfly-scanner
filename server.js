@@ -213,7 +213,7 @@ function requireLoyaltyAuth(req, res, next) {
   const header = req.headers.authorization || "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : (req.query.token || "");
   const payload = verifyToken(token);
-  if (!payload) return res.status(401).json({ error: "Invalid or expired session. Please verify your email again." });
+  if (!payload) return res.status(401).json({ error: "Session expired. Sign in with your email to continue." });
   req.loyaltyEmail = payload.email;
   next();
 }

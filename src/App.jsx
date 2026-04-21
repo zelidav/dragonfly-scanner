@@ -707,7 +707,7 @@ export default function DragonflyScanner() {
   };
 
   const scanReceiptWithVision = useCallback(async (imageSource) => {
-    if (!loyaltyToken) { setLoyaltyError("Please verify your email first."); setScreen("loyaltyEmail"); return; }
+    if (!loyaltyToken) { setLoyaltyError("Sign in with your email to scan receipts."); setScreen("loyaltyEmail"); return; }
     setScanning(true); setScanProgress(0); setLoyaltyError(null); setScanStatus("Reading receipt...");
     const progressTimer = setInterval(() => setScanProgress(p => Math.min(p + 3, 90)), 150);
     try {
@@ -737,9 +737,9 @@ export default function DragonflyScanner() {
 
       if (!r.ok) {
         const msg = data.error || "Receipt scan failed.";
-        setLoyaltyError(msg);
-        if (data.duplicate) setLoyaltyError(`${msg} (already submitted by ${data.duplicate.email})`);
+        setLoyaltyError(data.duplicate ? `${msg} (already submitted by ${data.duplicate.email})` : msg);
         setScanning(false); setScanStatus("");
+        if (r.status === 401) setScreen("loyaltyEmail");
         return;
       }
 
